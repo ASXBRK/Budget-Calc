@@ -112,13 +112,12 @@ const KEY_MAP = {
   value_2027: 'v27',
   valuation_method: 'vm',
   focus_years: 'fy',
-  axis_view: 'av',
 };
 const REVERSE_KEY_MAP = Object.fromEntries(
   Object.entries(KEY_MAP).map(([k, v]) => [v, k])
 );
 const STRING_KEYS = new Set([
-  'asset_type', 'valuation_method', 'axis_view', 'purchase_date',
+  'asset_type', 'valuation_method', 'purchase_date',
 ]);
 const BOOLEAN_KEYS = new Set(['income_support_recipient']);
 
@@ -743,11 +742,8 @@ const DEFAULT_INPUTS = {
   value_2027: 0,
   valuation_method: 'ATO_formula',
   focus_years: 10,
-  axis_view: 'holding_period',
 };
 
-const HOLDING_MIN = 1;
-const HOLDING_MAX = 16;
 const SALE_YEAR_SPAN = 25;
 
 function buildCostBase(inputs, isPreCgt) {
@@ -860,34 +856,22 @@ export default function App() {
       }
     };
 
-    if (inputs.axis_view === 'sale_year') {
-      const startYear = pd.getFullYear() + 1;
-      const endYear = startYear + SALE_YEAR_SPAN - 1;
-      for (let y = startYear; y <= endYear; y++) {
-        const sale = new Date(`${y}-06-30T00:00:00+10:00`);
-        const years = Math.max((sale - pd) / MS_PER_YEAR, 0);
-        const p = buildPoint(sale, years, y, y);
-        if (p) points.push(p);
-      }
-    } else {
-      for (let h = HOLDING_MIN; h <= HOLDING_MAX; h++) {
-        const sale = new Date(pd);
-        sale.setFullYear(pd.getFullYear() + h);
-        const p = buildPoint(sale, h, h, `${h}y`);
-        if (p) points.push(p);
-      }
+    const startYear = pd.getFullYear() + 1;
+    const endYear = startYear + SALE_YEAR_SPAN - 1;
+    for (let y = startYear; y <= endYear; y++) {
+      const sale = new Date(`${y}-06-30T00:00:00+10:00`);
+      const years = Math.max((sale - pd) / MS_PER_YEAR, 0);
+      const p = buildPoint(sale, years, y, y);
+      if (p) points.push(p);
     }
     return points;
   }, [inputs, costBase, isPreCgt, result.error]);
 
-  // Where the focus reference line falls on the chart's x-axis
+  // Where the focus reference line falls on the chart's x-axis (sale year)
   const focusX = useMemo(() => {
-    if (inputs.axis_view === 'sale_year') {
-      const pd = new Date(inputs.purchase_date);
-      return pd.getFullYear() + Math.round(inputs.focus_years);
-    }
-    return Math.round(inputs.focus_years);
-  }, [inputs.axis_view, inputs.purchase_date, inputs.focus_years]);
+    const pd = new Date(inputs.purchase_date);
+    return pd.getFullYear() + Math.round(inputs.focus_years);
+  }, [inputs.purchase_date, inputs.focus_years]);
 
   const verdict = useMemo(() => {
     if (result.error) return null;
@@ -1051,44 +1035,26 @@ export default function App() {
 
           {showResults && chartData.length > 0 && (
             <Card>
-              {/* Chart header: tabs + axis-view toggle */}
-              <div style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                borderBottom: `1px solid ${C.border}`, marginBottom: 12,
-              }}>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {[
-                    { id: 'after_tax', label: 'After-tax proceeds' },
-                    { id: 'effective_rate', label: 'Effective rate' },
-                  ].map((tab) => (
-                    <button
-                      key={tab.id}
-                      onClick={() => setChartTab(tab.id)}
-                      style={{
-                        border: 'none', background: 'transparent', cursor: 'pointer',
-                        padding: '8px 14px', fontSize: 13, fontWeight: 600, fontFamily: FONT_BODY,
-                        color: chartTab === tab.id ? C.textPrimary : C.textMuted,
-                        borderBottom: chartTab === tab.id ? `2px solid ${C.teal}` : '2px solid transparent',
-                        marginBottom: -1,
-                      }}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 6 }}>
-                  <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                    X-axis
-                  </span>
-                  <Toggle
-                    value={inputs.axis_view}
-                    onChange={(v) => update({ axis_view: v })}
-                    options={[
-                      { value: 'holding_period', label: 'Holding period' },
-                      { value: 'sale_year', label: 'Sale year' },
-                    ]}
-                  />
-                </div>
+              {/* Chart header: tabs only — x-axis is always sale year */}
+              <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 12 }}>
+                {[
+                  { id: 'after_tax', label: 'After-tax proceeds' },
+                  { id: 'effective_rate', label: 'Effective rate' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setChartTab(tab.id)}
+                    style={{
+                      border: 'none', background: 'transparent', cursor: 'pointer',
+                      padding: '8px 14px', fontSize: 13, fontWeight: 600, fontFamily: FONT_BODY,
+                      color: chartTab === tab.id ? C.textPrimary : C.textMuted,
+                      borderBottom: chartTab === tab.id ? `2px solid ${C.teal}` : '2px solid transparent',
+                      marginBottom: -1,
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
               <div style={{ fontSize: 11, color: C.teal, fontStyle: 'italic', marginBottom: 8 }}>
                 {chartTab === 'after_tax'
@@ -1098,38 +1064,24 @@ export default function App() {
               <MainChart
                 data={chartData}
                 tab={chartTab}
-                xLabel={inputs.axis_view === 'sale_year' ? 'Sale year' : 'Holding period (years)'}
+                xLabel="Sale year"
                 focusX={focusX}
               />
 
-              {/* Focus year slider */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 16,
-                marginTop: 10, padding: '8px 4px',
-                borderTop: `1px solid ${C.border}`,
-              }}>
-                <div style={{
-                  fontSize: 11, color: C.textMuted, fontWeight: 600,
-                  textTransform: 'uppercase', letterSpacing: 0.4, minWidth: 70,
-                }}>
-                  Focus
-                </div>
-                <input
-                  type="range"
-                  className="slider-track"
-                  min={HOLDING_MIN}
-                  max={HOLDING_MAX}
-                  step={1}
-                  value={inputs.focus_years}
-                  onChange={(e) => update({ focus_years: Number(e.target.value) })}
-                  style={{ flex: 1 }}
-                />
-                <div style={{ fontSize: 13, fontFamily: FONT_MONO, fontWeight: 600, color: C.teal, minWidth: 100, textAlign: 'right' }}>
-                  {inputs.focus_years}y · sale {new Date(focusScenario.sale_date).getFullYear()}
-                </div>
-              </div>
+              <div style={{ height: 48 }} />
 
-              <DiffChart data={chartData} tab={chartTab} focusX={focusX} />
+              <div style={{
+                fontFamily: FONT_HEAD, fontSize: 14, fontWeight: 700,
+                color: C.textPrimary, marginBottom: 4,
+              }}>
+                Difference: New rules vs Old rules
+              </div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>
+                {chartTab === 'after_tax'
+                  ? 'Δ after-tax proceeds across sale years. Above zero = new rules better.'
+                  : 'Δ effective rate across sale years. Above zero = new rules costlier.'}
+              </div>
+              <DiffChart data={chartData} tab={chartTab} focusX={focusX} xLabel="Sale year" />
             </Card>
           )}
 
@@ -1156,10 +1108,11 @@ export default function App() {
 function UnifiedInputs({ inputs, update, isPreCgt }) {
   const purchase = new Date(inputs.purchase_date);
   // Valuation toggle relevant if non-pre-CGT and purchase straddles 1 Jul 2027
-  // for at least one chart point — i.e. purchase < cutoff (chart extends 16y+ forward).
+  // for at least one chart point — i.e. purchase < cutoff (chart extends 25y forward).
   const showValuationToggle = !isPreCgt && purchase < LEG.newRulesStart;
   const showValue2027ManualInput = showValuationToggle && inputs.valuation_method === 'use_entered_value';
   const isProperty = inputs.asset_type === 'property';
+  const purchaseYear = purchase.getFullYear();
 
   const acqLabel = isProperty ? 'Stamp duty + legal fees' : 'Acquisition costs';
   const improvementsLabel = isProperty
@@ -1231,6 +1184,21 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
               )}
             </>
           )}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Sale year" subtitle="Picks the highlighted scenario on the chart." />
+        <div>
+          <Label>Sale year</Label>
+          <Slider
+            value={inputs.focus_years}
+            onChange={(v) => update({ focus_years: v })}
+            min={1}
+            max={SALE_YEAR_SPAN}
+            step={1}
+            format={(v) => `${purchaseYear + v} · ${v}y`}
+          />
         </div>
       </Card>
 
@@ -1466,7 +1434,7 @@ function MainChart({ data, tab, xLabel, focusX }) {
   );
 }
 
-function DiffChart({ data, tab, focusX }) {
+function DiffChart({ data, tab, focusX, xLabel }) {
   const isPct = tab === 'effective_rate';
   const points = data.map((d) => {
     const diff = isPct ? d.newRate - d.oldRate : d.new - d.old;
@@ -1479,18 +1447,19 @@ function DiffChart({ data, tab, focusX }) {
   });
   const focusMatch = points.find((p) => p.x === focusX);
   return (
-    <div style={{ width: '100%', height: 150, marginTop: 32 }}>
+    <div style={{ width: '100%', height: 320 }}>
       <ResponsiveContainer>
-        <AreaChart data={points} margin={{ top: 0, right: 16, bottom: 4, left: 4 }}>
+        <AreaChart data={points} margin={{ top: 8, right: 16, bottom: 24, left: 4 }}>
           <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="xLabel"
             stroke={C.textSubtle}
-            tick={{ fontSize: 10, fontFamily: FONT_MONO, fill: C.textMuted }}
+            tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
+            label={{ value: xLabel, position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
           />
           <YAxis
             stroke={C.textSubtle}
-            tick={{ fontSize: 10, fontFamily: FONT_MONO, fill: C.textMuted }}
+            tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
             tickFormatter={isPct ? (v) => `${v.toFixed(0)}%` : fmtK}
             width={60}
           />
@@ -1503,9 +1472,6 @@ function DiffChart({ data, tab, focusX }) {
           )}
         </AreaChart>
       </ResponsiveContainer>
-      <div style={{ fontSize: 10, color: C.textMuted, marginTop: -2, paddingLeft: 6 }}>
-        Difference (new − old). Above zero = new rules better, below zero = new rules costlier.
-      </div>
     </div>
   );
 }
