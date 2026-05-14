@@ -1,0 +1,1422 @@
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+  Area,
+  AreaChart,
+  Legend,
+} from 'recharts';
+import { Copy, Link as LinkIcon, X, Settings, Info, Check } from 'lucide-react';
+import { runCGTProjection, runCGTSeries, LEG } from './engine.js';
+
+// ----------------------------------------------------------------------------
+// Design tokens
+// ----------------------------------------------------------------------------
+
+const C = {
+  teal: '#0d9488', tealLight: '#ccfbf1',
+  dark: '#111827', white: '#ffffff', offWhite: '#f8fafc',
+  textPrimary: '#111827', textSecondary: '#374151',
+  textMuted: '#6b7280', textSubtle: '#9ca3af',
+  border: '#e2e8f0',
+  healthy: '#10b981', healthyBg: '#d1fae5', healthyText: '#065f46',
+  warning: '#f59e0b', warningBg: '#fef3c7', warningText: '#92400e',
+  risk: '#ef4444', riskBg: '#fee2e2', riskText: '#991b1b',
+  oldRules: '#0d9488',
+  newRules: '#f59e0b',
+  preCgt: '#10b981',
+};
+
+const FONT_BODY = "'Plus Jakarta Sans', system-ui, sans-serif";
+const FONT_HEAD = "'DM Sans', system-ui, sans-serif";
+const FONT_MONO = "'JetBrains Mono', ui-monospace, monospace";
+
+const HIDE_SPINNERS = `
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+  .slider-track { -webkit-appearance: none; appearance: none; height: 4px; background: ${C.border}; border-radius: 2px; outline: none; }
+  .slider-track::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: ${C.teal}; cursor: pointer; border: 2px solid ${C.white}; box-sizing: border-box; }
+  .slider-track::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: ${C.teal}; cursor: pointer; border: 2px solid ${C.white}; }
+`;
+
+// ----------------------------------------------------------------------------
+// Format helpers
+// ----------------------------------------------------------------------------
+
+const fmt = (v) =>
+  new Intl.NumberFormat('en-AU', {
+    style: 'currency',
+    currency: 'AUD',
+    maximumFractionDigits: 0,
+  }).format(Math.round(v || 0));
+
+const fmtK = (v) => {
+  const n = Number(v) || 0;
+  return Math.abs(n) >= 1e6
+    ? `$${(n / 1e6).toFixed(1)}M`
+    : `$${Math.round(n / 1e3)}k`;
+};
+
+const fmtPct = (v, decimals = 1) => `${((Number(v) || 0) * 100).toFixed(decimals)}%`;
+
+const fmtDate = (d) => {
+  if (!d) return '';
+  const dt = d instanceof Date ? d : new Date(d);
+  return new Intl.DateTimeFormat('en-AU', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(dt);
+};
+
+const fyForDate = (d) => {
+  const dt = d instanceof Date ? d : new Date(d);
+  const start = dt.getMonth() >= 6 ? dt.getFullYear() : dt.getFullYear() - 1;
+  return `${start}-${String(start + 1).slice(-2)}`;
+};
+
+const computeMarginalRate = (otherIncome, fy = '2027-28') => {
+  const brackets = LEG.brackets[fy] || LEG.brackets[LEG.defaultBracketYear];
+  for (const [floor, ceiling, rate] of brackets) {
+    if (otherIncome >= floor && otherIncome < ceiling) return rate;
+  }
+  return brackets[brackets.length - 1][2];
+};
+
+// ----------------------------------------------------------------------------
+// URL state
+// ----------------------------------------------------------------------------
+
+const KEY_MAP = {
+  mode: 'mode',
+  purchase_price: 'pp',
+  return_rate: 'rr',
+  inflation: 'inf',
+  holding_years: 'hy',
+  other_income: 'oi',
+  income_support_recipient: 'is',
+  purchase_date: 'pd',
+  acquisition_costs: 'ac',
+  capital_improvements: 'ci',
+  sale_date: 'sd',
+  sale_price: 'sp',
+  sale_costs: 'sc',
+  growth_rate: 'gr',
+  valuation_method: 'vm',
+  value_2027: 'v27',
+  is_pre_cgt: 'pre',
+};
+const REVERSE_KEY_MAP = Object.fromEntries(
+  Object.entries(KEY_MAP).map(([k, v]) => [v, k])
+);
+
+function encodeState(state) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(state)) {
+    if (value == null || value === '') continue;
+    const shortKey = KEY_MAP[key];
+    if (!shortKey) continue;
+    if (typeof value === 'boolean') {
+      params.set(shortKey, value ? '1' : '0');
+    } else if (value instanceof Date) {
+      params.set(shortKey, value.toISOString().slice(0, 10));
+    } else {
+      params.set(shortKey, String(value));
+    }
+  }
+  params.set('v', '1');
+  return params.toString();
+}
+
+function decodeState(search) {
+  const params = new URLSearchParams(search);
+  const out = {};
+  for (const [shortKey, value] of params.entries()) {
+    if (shortKey === 'v') continue;
+    const longKey = REVERSE_KEY_MAP[shortKey];
+    if (!longKey) continue;
+    if (longKey === 'is_pre_cgt' || longKey === 'income_support_recipient') {
+      out[longKey] = value === '1';
+    } else if (longKey === 'mode' || longKey === 'valuation_method' || longKey.endsWith('_date')) {
+      out[longKey] = value;
+    } else {
+      const num = Number(value);
+      out[longKey] = Number.isFinite(num) ? num : value;
+    }
+  }
+  return out;
+}
+
+// ----------------------------------------------------------------------------
+// Atoms
+// ----------------------------------------------------------------------------
+
+function Card({ children, style }) {
+  return (
+    <div
+      style={{
+        background: C.white,
+        border: `1px solid ${C.border}`,
+        borderRadius: 12,
+        padding: 18,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function CardHeader({ title, subtitle, right }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+      <div>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 14, fontWeight: 700, color: C.textPrimary }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{subtitle}</div>}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function Label({ children, hint }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        {children}
+      </span>
+      {hint && <span style={{ fontSize: 11, color: C.textSubtle, fontFamily: FONT_MONO }}>{hint}</span>}
+    </div>
+  );
+}
+
+function NumberInput({ value, onChange, prefix = '$', step = 1, min }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', border: `1px solid ${C.border}`,
+      borderRadius: 8, padding: '6px 10px', background: C.white,
+    }}>
+      {prefix && <span style={{ color: C.textMuted, marginRight: 6, fontSize: 13 }}>{prefix}</span>}
+      <input
+        type="number"
+        value={value === '' ? '' : value}
+        step={step}
+        min={min}
+        onChange={(e) => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
+        style={{
+          border: 'none', outline: 'none', width: '100%', fontSize: 14,
+          fontFamily: FONT_MONO, color: C.textPrimary, background: 'transparent',
+        }}
+      />
+    </div>
+  );
+}
+
+function DateInput({ value, onChange }) {
+  return (
+    <input
+      type="date"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{
+        border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 10px',
+        fontSize: 13, fontFamily: FONT_BODY, color: C.textPrimary, background: C.white,
+        width: '100%', boxSizing: 'border-box', outline: 'none',
+      }}
+    />
+  );
+}
+
+function Slider({ value, onChange, min, max, step, format }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div />
+        <div style={{ fontSize: 13, fontFamily: FONT_MONO, fontWeight: 600, color: C.teal }}>
+          {format ? format(value) : value}
+        </div>
+      </div>
+      <input
+        type="range"
+        className="slider-track"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: '100%' }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: C.textSubtle, marginTop: 2, fontFamily: FONT_MONO }}>
+        <span>{format ? format(min) : min}</span>
+        <span>{format ? format(max) : max}</span>
+      </div>
+    </div>
+  );
+}
+
+function Toggle({ value, onChange, options }) {
+  return (
+    <div style={{
+      display: 'inline-flex', border: `1px solid ${C.border}`, borderRadius: 8,
+      padding: 2, background: C.offWhite,
+    }}>
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={String(opt.value)}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            style={{
+              border: 'none',
+              background: active ? C.white : 'transparent',
+              color: active ? C.textPrimary : C.textMuted,
+              fontFamily: FONT_BODY, fontSize: 12, fontWeight: 600,
+              padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+              boxShadow: active ? `0 0 0 1px ${C.border}` : 'none',
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Timeline strip
+// ----------------------------------------------------------------------------
+
+function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
+  const start = new Date(LEG.newRulesStart);
+  // Compute display window
+  const pdate = purchaseDate ? new Date(purchaseDate) : null;
+  const sdate = saleDate ? new Date(saleDate) : null;
+  if (!pdate || !sdate) return null;
+
+  // Determine x window: include both dates + a buffer around 1 Jul 2027
+  const earliest = new Date(Math.min(pdate.getTime(), start.getTime() - 365 * 24 * 3600 * 1000));
+  const latest = new Date(Math.max(sdate.getTime(), start.getTime() + 365 * 24 * 3600 * 1000));
+  const span = latest - earliest;
+  const pct = (d) => ((d - earliest) / span) * 100;
+
+  const cutoffPct = pct(start);
+  const purchasePct = pct(pdate);
+  const salePct = pct(sdate);
+
+  // Segments: pre and post (and pre-CGT exempt vs 50% discount)
+  let preColor, preLabel;
+  if (isPreCgt) {
+    preColor = C.preCgt;
+    preLabel = 'Pre-CGT exempt';
+  } else {
+    preColor = C.teal;
+    preLabel = '50% discount';
+  }
+  const postColor = C.newRules;
+  const postLabel = 'Indexation + 30% min';
+
+  // Visual segment from max(purchase, earliest) up to min(sale, latest)
+  const segStart = Math.max(purchasePct, 0);
+  const segEnd = Math.min(salePct, 100);
+
+  return (
+    <div style={{ marginBottom: 16, paddingTop: 4 }}>
+      {/* Bucket label */}
+      <div style={{ fontSize: 10, color: C.textMuted, fontFamily: FONT_MONO, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        Bucket {bucket} · {LEG.buckets[bucket]?.split(' — ')[1] || ''}
+      </div>
+      {/* Bar container */}
+      <div style={{ position: 'relative', height: 36, background: C.offWhite, borderRadius: 4, border: `1px solid ${C.border}` }}>
+        {/* Pre-2027 segment */}
+        {bucket !== 'C' && segStart < cutoffPct && (
+          <div style={{
+            position: 'absolute', top: 0, bottom: 0,
+            left: `${segStart}%`,
+            width: `${Math.min(segEnd, cutoffPct) - segStart}%`,
+            background: preColor, borderRadius: '4px 0 0 4px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: C.white, fontSize: 10, fontWeight: 600, fontFamily: FONT_BODY,
+            overflow: 'hidden', whiteSpace: 'nowrap',
+          }}>
+            {preLabel}
+          </div>
+        )}
+        {/* Post-2027 segment */}
+        {bucket !== 'A' && segEnd > cutoffPct && (
+          <div style={{
+            position: 'absolute', top: 0, bottom: 0,
+            left: `${Math.max(segStart, cutoffPct)}%`,
+            width: `${segEnd - Math.max(segStart, cutoffPct)}%`,
+            background: postColor, borderRadius: bucket === 'C' ? '4px' : '0 4px 4px 0',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: C.white, fontSize: 10, fontWeight: 600, fontFamily: FONT_BODY,
+            overflow: 'hidden', whiteSpace: 'nowrap',
+          }}>
+            {postLabel}
+          </div>
+        )}
+        {/* 1 July 2027 marker */}
+        <div style={{
+          position: 'absolute', top: -2, bottom: -2,
+          left: `${cutoffPct}%`,
+          borderLeft: `1px dashed ${C.dark}`,
+        }} />
+        <div style={{
+          position: 'absolute', top: -16, left: `${cutoffPct}%`,
+          transform: 'translateX(-50%)',
+          fontSize: 9, color: C.textMuted, whiteSpace: 'nowrap', fontFamily: FONT_MONO,
+        }}>
+          1 Jul 2027
+        </div>
+      </div>
+      {/* Date labels under bar */}
+      <div style={{ position: 'relative', height: 14, marginTop: 2 }}>
+        <div style={{
+          position: 'absolute', left: `${purchasePct}%`, transform: 'translateX(-50%)',
+          fontSize: 9, fontFamily: FONT_MONO, color: C.textSecondary, whiteSpace: 'nowrap',
+        }}>
+          Bought {fmtDate(pdate)}
+        </div>
+        <div style={{
+          position: 'absolute', left: `${salePct}%`, transform: 'translateX(-50%)',
+          fontSize: 9, fontFamily: FONT_MONO, color: C.textSecondary, whiteSpace: 'nowrap',
+        }}>
+          Sold {fmtDate(sdate)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Tooltip
+// ----------------------------------------------------------------------------
+
+function ChartTooltip({ active, payload, label, suffix }) {
+  if (!active || !payload || !payload.length) return null;
+  const old = payload.find((p) => p.dataKey === 'old')?.value;
+  const nw = payload.find((p) => p.dataKey === 'new')?.value;
+  const diff = (nw ?? 0) - (old ?? 0);
+  const isPct = suffix === '%';
+  return (
+    <div style={{
+      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
+      padding: 10, fontSize: 12, fontFamily: FONT_BODY,
+      minWidth: 180,
+    }}>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{label}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ color: C.oldRules }}>Old rules</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>
+          {isPct ? `${(old || 0).toFixed(1)}%` : fmt(old)}
+        </span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ color: C.newRules }}>New rules</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>
+          {isPct ? `${(nw || 0).toFixed(1)}%` : fmt(nw)}
+        </span>
+      </div>
+      <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+        <span style={{ color: C.textMuted }}>Δ</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color: diff > 0 ? C.risk : C.healthy }}>
+          {isPct ? `${diff.toFixed(1)}%` : fmt(diff)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Modals
+// ----------------------------------------------------------------------------
+
+function Modal({ title, onClose, children, wide }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(17, 24, 39, 0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: C.white, borderRadius: 12, padding: 24,
+          width: wide ? 720 : 520, maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto',
+          border: `1px solid ${C.border}`,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ fontFamily: FONT_HEAD, fontSize: 16, fontWeight: 700 }}>{title}</div>
+          <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: C.textMuted, padding: 4 }}>
+            <X size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ParamsModal({ onClose }) {
+  const fmtConst = (v) => {
+    if (v instanceof Date) return fmtDate(v);
+    if (typeof v === 'number') return v < 1 ? fmtPct(v, 2) : v;
+    return String(v);
+  };
+  const flat = [
+    ['New rules commencement', fmtDate(LEG.newRulesStart)],
+    ['Pre-CGT cutoff', fmtDate(LEG.preCgtCutoff)],
+    ['Minimum tax rate', fmtPct(LEG.minimumTaxRate, 0)],
+    ['Old discount rate', fmtPct(LEG.oldDiscountRate, 0)],
+    ['Super fund discount', fmtPct(LEG.superDiscountRate, 1) + ' (not modelled v1)'],
+    ['Medicare levy (flat)', fmtPct(LEG.medicareLevy, 0)],
+    ['Apportionment method', LEG.apportionmentMethod],
+    ['Indexation frequency', LEG.indexationFrequency],
+    ['Minimum tax application', LEG.minimumTaxApplication],
+    ['Stacking order', LEG.stackingOrder],
+  ];
+  return (
+    <Modal title="Legislated parameters" onClose={onClose} wide>
+      {/* Reference timeline diagram */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          Four transition buckets
+        </div>
+        <BucketsDiagram />
+      </div>
+      <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.4 }}>Constants</div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 16 }}>
+        <tbody>
+          {flat.map(([k, v]) => (
+            <tr key={k}>
+              <td style={{ padding: '6px 0', color: C.textSecondary, borderBottom: `1px solid ${C.border}` }}>{k}</td>
+              <td style={{ padding: '6px 0', fontFamily: FONT_MONO, textAlign: 'right', borderBottom: `1px solid ${C.border}` }}>{v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.4 }}>Marginal tax brackets (resident individuals)</div>
+      {Object.entries(LEG.brackets).map(([fy, bk]) => (
+        <div key={fy} style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{fy}</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <tbody>
+              {bk.map(([f, c, r]) => (
+                <tr key={f}>
+                  <td style={{ padding: '4px 8px', color: C.textSecondary, fontFamily: FONT_MONO }}>
+                    {fmt(f)} – {c === Infinity ? '∞' : fmt(c)}
+                  </td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', fontFamily: FONT_MONO }}>{fmtPct(r, 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 12 }}>
+        Subject to final legislation. Engine constants designed for one-line updates when law is released.
+      </div>
+    </Modal>
+  );
+}
+
+function BucketsDiagram() {
+  const rows = [
+    { label: 'A', desc: 'Bought & sold before 1 Jul 2027', pre: 100, post: 0, preColor: C.teal },
+    { label: 'B', desc: 'Bought before, sold after', pre: 60, post: 40, preColor: C.teal },
+    { label: 'C', desc: 'Bought after 1 Jul 2027', pre: 0, post: 100, preColor: C.teal },
+    { label: 'D', desc: 'Pre-1985 asset, sold after', pre: 60, post: 40, preColor: C.preCgt },
+  ];
+  return (
+    <div>
+      {rows.map((r) => (
+        <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          <div style={{
+            width: 18, height: 18, borderRadius: 4, background: C.dark, color: C.white,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 11, fontWeight: 700, fontFamily: FONT_MONO,
+          }}>{r.label}</div>
+          <div style={{ flex: 1, height: 20, position: 'relative', border: `1px solid ${C.border}`, borderRadius: 3, overflow: 'hidden' }}>
+            {r.pre > 0 && (
+              <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${r.pre}%`, background: r.preColor }} />
+            )}
+            {r.post > 0 && (
+              <div style={{ position: 'absolute', left: `${r.pre}%`, top: 0, bottom: 0, width: `${r.post}%`, background: C.newRules }} />
+            )}
+            {r.post > 0 && r.pre > 0 && (
+              <div style={{ position: 'absolute', left: `${r.pre}%`, top: 0, bottom: 0, borderLeft: `1px dashed ${C.dark}` }} />
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: C.textSecondary, width: 220 }}>{r.desc}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AssumptionsModal({ diagnostics, onClose }) {
+  const labels = {
+    apportionmentMethod: 'Split apportionment',
+    indexationFrequency: 'Indexation frequency',
+    minimumTaxApplication: '30% minimum application',
+    stackingOrder: 'Tax stacking (Bucket B)',
+    medicareLevyAssumption: 'Medicare levy',
+    inflationAssumption: 'Inflation',
+    capitalLossesHandled: 'Capital losses modelled',
+    costBaseElementsIndexed: 'Cost base elements indexed',
+    legislationStatus: 'Legislation status',
+  };
+  return (
+    <Modal title="Engine assumptions" onClose={onClose}>
+      <div style={{ fontSize: 12, color: C.textSecondary, marginBottom: 12 }}>
+        Treasury hasn't released final mechanics. Where ambiguity exists, the engine commits to the published industry consensus and surfaces the choice here.
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <tbody>
+          {Object.entries(diagnostics).map(([k, v]) => (
+            <tr key={k}>
+              <td style={{ padding: '6px 0', color: C.textSecondary, borderBottom: `1px solid ${C.border}` }}>
+                {labels[k] || k}
+              </td>
+              <td style={{ padding: '6px 0', fontFamily: FONT_MONO, textAlign: 'right', borderBottom: `1px solid ${C.border}` }}>
+                {String(v)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Modal>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Detail table
+// ----------------------------------------------------------------------------
+
+function DetailTable({ rows }) {
+  if (!rows || !rows.length) return null;
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{
+        width: '100%', borderCollapse: 'collapse', fontSize: 12,
+        fontFamily: FONT_MONO,
+      }}>
+        <thead>
+          <tr>
+            {['Year', 'Asset value', 'Indexed cost base', 'Real gain', 'Old tax', 'New tax', 'Δ'].map((h) => (
+              <th key={h} style={{
+                padding: '6px 8px', textAlign: h === 'Year' ? 'left' : 'right',
+                borderBottom: `1px solid ${C.border}`, color: C.textMuted,
+                fontWeight: 600, fontFamily: FONT_BODY, fontSize: 11,
+                textTransform: 'uppercase', letterSpacing: 0.4,
+              }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.year}>
+              <td style={{ padding: '5px 8px', borderBottom: `1px solid ${C.border}`, color: C.textPrimary }}>{r.year}</td>
+              <td style={{ padding: '5px 8px', textAlign: 'right', borderBottom: `1px solid ${C.border}` }}>{fmt(r.assetValue)}</td>
+              <td style={{ padding: '5px 8px', textAlign: 'right', borderBottom: `1px solid ${C.border}` }}>{fmt(r.indexedCostBase)}</td>
+              <td style={{ padding: '5px 8px', textAlign: 'right', borderBottom: `1px solid ${C.border}` }}>{fmt(r.realGain)}</td>
+              <td style={{ padding: '5px 8px', textAlign: 'right', borderBottom: `1px solid ${C.border}`, color: C.oldRules }}>{fmt(r.oldTax)}</td>
+              <td style={{ padding: '5px 8px', textAlign: 'right', borderBottom: `1px solid ${C.border}`, color: C.newRules }}>{fmt(r.newTax)}</td>
+              <td style={{
+                padding: '5px 8px', textAlign: 'right', borderBottom: `1px solid ${C.border}`,
+                color: r.newTax - r.oldTax > 0 ? C.risk : C.healthy,
+              }}>{fmt(r.newTax - r.oldTax)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Main App
+// ----------------------------------------------------------------------------
+
+const DEFAULT_MODE1 = {
+  mode: 'old_vs_new',
+  purchase_price: 500000,
+  return_rate: 0.06,
+  inflation: 0.025,
+  holding_years: 10,
+  other_income: 100000,
+  income_support_recipient: false,
+};
+
+const today = new Date();
+const DEFAULT_MODE2 = {
+  mode: 'specific',
+  purchase_date: '2020-07-01',
+  purchase_price: 100000,
+  acquisition_costs: 500,
+  capital_improvements: 0,
+  sale_date: `${today.getFullYear() + 5}-06-30`,
+  sale_price: 0, // derived
+  sale_costs: 500,
+  growth_rate: 0.06,
+  inflation: 0.025,
+  other_income: 100000,
+  income_support_recipient: false,
+  is_pre_cgt: false,
+  valuation_method: 'ATO_formula',
+  value_2027: 0,
+};
+
+export default function App() {
+  const [mode, setMode] = useState('old_vs_new');
+  const [mode1, setMode1] = useState(DEFAULT_MODE1);
+  const [mode2, setMode2] = useState(DEFAULT_MODE2);
+  const [chartTab, setChartTab] = useState('after_tax');
+  const [paramsOpen, setParamsOpen] = useState(false);
+  const [assumptionsOpen, setAssumptionsOpen] = useState(false);
+  const [salePriceOverridden, setSalePriceOverridden] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Hydrate from URL on first mount
+  useEffect(() => {
+    const decoded = decodeState(window.location.search);
+    if (decoded.mode === 'specific') {
+      setMode('specific');
+      setMode2((m) => ({ ...m, ...decoded }));
+      if (decoded.sale_price) setSalePriceOverridden(true);
+    } else if (decoded.mode === 'old_vs_new') {
+      setMode('old_vs_new');
+      setMode1((m) => ({ ...m, ...decoded }));
+    }
+  }, []);
+
+  // Push state to URL on every change (replace, not push, to avoid history spam)
+  useEffect(() => {
+    const active = mode === 'old_vs_new' ? { ...mode1, mode } : { ...mode2, mode };
+    const qs = encodeState(active);
+    const url = `${window.location.pathname}?${qs}`;
+    window.history.replaceState(null, '', url);
+  }, [mode, mode1, mode2]);
+
+  const updateMode1 = useCallback((patch) => setMode1((s) => ({ ...s, ...patch })), []);
+  const updateMode2 = useCallback((patch) => setMode2((s) => ({ ...s, ...patch })), []);
+
+  // Derive sale price for Mode 2 when not overridden
+  const mode2Effective = useMemo(() => {
+    if (mode2.is_pre_cgt) {
+      // For pre-CGT, derive sale price from value_2027 + growth_rate
+      // Years between purchase and sale don't apply pre-2027 since it's exempt
+      const sd = new Date(mode2.sale_date);
+      const yearsPost = Math.max((sd - new Date(LEG.newRulesStart)) / (365.25 * 24 * 3600 * 1000), 0);
+      const derived = (mode2.value_2027 || 0) * Math.pow(1 + mode2.growth_rate, yearsPost);
+      return {
+        ...mode2,
+        sale_price: salePriceOverridden ? mode2.sale_price : Math.round(derived),
+      };
+    }
+    if (salePriceOverridden && mode2.sale_price > 0) return mode2;
+    const pd = new Date(mode2.purchase_date);
+    const sd = new Date(mode2.sale_date);
+    const years = Math.max((sd - pd) / (365.25 * 24 * 3600 * 1000), 0);
+    const cb = (mode2.purchase_price || 0) + (mode2.acquisition_costs || 0) + (mode2.capital_improvements || 0);
+    const derived = cb * Math.pow(1 + mode2.growth_rate, years);
+    return { ...mode2, sale_price: Math.round(derived) };
+  }, [mode2, salePriceOverridden]);
+
+  const result = useMemo(() => {
+    try {
+      if (mode === 'old_vs_new') return runCGTProjection(mode1);
+      return runCGTProjection(mode2Effective);
+    } catch (e) {
+      return { error: e.message };
+    }
+  }, [mode, mode1, mode2Effective]);
+
+  // Series for charts
+  const chartData = useMemo(() => {
+    if (result.error) return [];
+    if (mode === 'old_vs_new') {
+      const series = runCGTSeries(mode1, 'holding_years', [1, 30]);
+      return series.map((s, i) => ({
+        x: i + 1,
+        xLabel: `${i + 1}y`,
+        old: s.oldRules?.afterTaxProceeds || 0,
+        new: s.newRules?.afterTaxProceeds || 0,
+        oldRate: (s.oldRules?.effectiveRate || 0) * 100,
+        newRate: (s.newRules?.effectiveRate || 0) * 100,
+      }));
+    }
+    // Mode 2: vary sale year from purchase year + 1 to purchase year + 20
+    const pd = new Date(mode2.purchase_date);
+    const startYear = Math.max(pd.getFullYear() + 1, 2024);
+    const endYear = startYear + 25;
+    const series = runCGTSeries(
+      { ...mode2Effective, sale_price_derive: true },
+      'sale_year',
+      [startYear, endYear]
+    );
+    return series.map((s) => {
+      const y = new Date(s.saleDate || mode2Effective.sale_date).getFullYear();
+      return {
+        x: y,
+        xLabel: y,
+        old: s.oldRules?.afterTaxProceeds || 0,
+        new: s.actual?.afterTaxProceeds || s.newRules?.afterTaxProceeds || 0,
+        oldRate: (s.oldRules?.effectiveRate || 0) * 100,
+        newRate: (s.actual?.effectiveRate || s.newRules?.effectiveRate || 0) * 100,
+      };
+    });
+  }, [mode, mode1, mode2, mode2Effective, result]);
+
+  // Year-by-year rows for Mode 2
+  const yearByYearRows = useMemo(() => {
+    if (mode !== 'specific' || result.error) return [];
+    const pd = new Date(mode2.purchase_date);
+    const sd = new Date(mode2.sale_date);
+    const startYear = pd.getFullYear() + 1;
+    const endYear = sd.getFullYear();
+    const cb = mode2.is_pre_cgt
+      ? (mode2.value_2027 || 0)
+      : (mode2.purchase_price || 0) + (mode2.acquisition_costs || 0) + (mode2.capital_improvements || 0);
+    const rows = [];
+    for (let y = startYear; y <= endYear; y++) {
+      const yearSaleDate = new Date(`${y}-06-30T00:00:00+10:00`);
+      const yrs = Math.max((yearSaleDate - pd) / (365.25 * 24 * 3600 * 1000), 0);
+      const assetValue = cb * Math.pow(1 + mode2.growth_rate, yrs);
+      const inflFactor = Math.pow(1 + mode2.inflation, yrs);
+      const indexedCb = cb * inflFactor;
+      const realGain = Math.max(assetValue - indexedCb, 0);
+      try {
+        const r = runCGTProjection({
+          ...mode2,
+          sale_date: yearSaleDate.toISOString().slice(0, 10),
+          sale_price: assetValue,
+        });
+        rows.push({
+          year: y,
+          assetValue,
+          indexedCostBase: indexedCb,
+          realGain,
+          oldTax: r.oldRules?.taxOnGain || 0,
+          newTax: r.actual?.taxOnGain || r.newRules?.taxOnGain || 0,
+        });
+      } catch {
+        // skip
+      }
+    }
+    return rows;
+  }, [mode, mode2, result]);
+
+  // MTR readout
+  const mtr = useMemo(() => {
+    const otherIncome = mode === 'old_vs_new' ? mode1.other_income : mode2.other_income;
+    const fy = mode === 'old_vs_new' ? '2027-28' : fyForDate(mode2.sale_date);
+    return computeMarginalRate(otherIncome, fy);
+  }, [mode, mode1, mode2]);
+
+  // Copy summary
+  const copySummary = useCallback(() => {
+    const r = result;
+    if (r.error) return;
+    const lines = [];
+    lines.push(`CGT Estimate — ${fmtDate(new Date())}`);
+    lines.push(`Mode: ${mode === 'old_vs_new' ? 'Old vs New rules' : 'Specific asset'}`);
+    if (mode === 'specific') {
+      lines.push(`Purchase: ${fmt(mode2Effective.purchase_price)} on ${fmtDate(mode2.purchase_date)}`);
+      lines.push(`Sale: ${fmt(mode2Effective.sale_price)} on ${fmtDate(mode2.sale_date)}`);
+      lines.push(`Bucket: ${r.bucket} (${LEG.buckets[r.bucket]?.split(' — ')[1] || ''})`);
+      if (r.split) {
+        lines.push(`Pre-1 July 2027 gain (taxable): ${fmt(r.split.prePortionTaxable)}`);
+        lines.push(`Post-1 July 2027 gain (taxable): ${fmt(r.split.postPortionTaxable)}`);
+        lines.push(`Total taxable: ${fmt(r.split.totalTaxable)}`);
+      }
+      lines.push(`Actual tax: ${fmt(r.actual.taxOnGain)}`);
+      lines.push(`Actual after-tax proceeds: ${fmt(r.actual.afterTaxProceeds)}`);
+      lines.push(`Counterfactual old-rules after-tax: ${fmt(r.oldRules.afterTaxProceeds)}`);
+      const diff = r.actual.afterTaxProceeds - r.oldRules.afterTaxProceeds;
+      lines.push(`Difference: ${fmt(Math.abs(diff))} (${diff >= 0 ? 'new regime better' : 'new regime costs more'})`);
+    } else {
+      lines.push(`Inputs: ${fmt(mode1.purchase_price)}, ${fmtPct(mode1.return_rate)} return, ${fmtPct(mode1.inflation)} inflation, ${mode1.holding_years} years`);
+      lines.push(`Old rules tax: ${fmt(r.oldRules.taxOnGain)}`);
+      lines.push(`New rules tax: ${fmt(r.newRules.taxOnGain)}`);
+      const diff = r.newRules.taxOnGain - r.oldRules.taxOnGain;
+      lines.push(`Difference: ${fmt(Math.abs(diff))} (${diff > 0 ? 'new regime costs more' : 'new regime better'})`);
+    }
+    lines.push('');
+    lines.push('— Generated by BPF CGT Tool. Illustrative only. Subject to final legislation.');
+    navigator.clipboard.writeText(lines.join('\n'));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [result, mode, mode1, mode2, mode2Effective]);
+
+  const copyLink = useCallback(() => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, []);
+
+  // Verdict
+  const verdict = useMemo(() => {
+    if (result.error) return null;
+    const oldVal = result.oldRules?.afterTaxProceeds || 0;
+    const newVal = (mode === 'specific' ? result.actual?.afterTaxProceeds : result.newRules?.afterTaxProceeds) || 0;
+    const diff = newVal - oldVal;
+    const pct = oldVal > 0 ? Math.abs(diff) / oldVal : 0;
+    if (mode === 'specific' && result.bucket === 'A') {
+      return { tone: 'neutral', label: 'Pre-2027 sale', desc: 'Old rules apply.' };
+    }
+    if (mode === 'specific' && result.bucket === 'D') {
+      return { tone: 'good', label: 'Pre-CGT exempt', desc: 'Pre-2027 gains exempt.' };
+    }
+    if (pct < 0.05) return { tone: 'warn', label: 'Within 5%', desc: 'Broadly equivalent outcome.' };
+    if (diff > 0) return { tone: 'good', label: 'New rules cheaper', desc: 'New regime preserves more after-tax value.' };
+    return { tone: 'bad', label: 'New rules costlier', desc: 'New regime costs more.' };
+  }, [result, mode]);
+
+  return (
+    <>
+      <style>{HIDE_SPINNERS}</style>
+
+      {/* Nav bar */}
+      <div style={{
+        background: C.white, borderBottom: `1px solid ${C.border}`,
+        padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        position: 'sticky', top: 0, zIndex: 50,
+      }}>
+        <div style={{ fontFamily: FONT_HEAD, fontWeight: 700, fontSize: 16, color: C.textPrimary }}>
+          BPF <span style={{ color: C.teal }}>CGT</span> Tool
+        </div>
+        <Toggle
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'old_vs_new', label: 'Old vs New rules' },
+            { value: 'specific', label: 'Specific asset' },
+          ]}
+        />
+        <button
+          onClick={() => setParamsOpen(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, background: 'transparent',
+            border: `1px solid ${C.border}`, padding: '6px 12px', borderRadius: 8,
+            fontSize: 12, fontFamily: FONT_BODY, cursor: 'pointer', color: C.textSecondary,
+          }}
+        >
+          <Settings size={14} /> Params
+        </button>
+      </div>
+
+      {/* Main layout */}
+      <div style={{
+        maxWidth: 1280, margin: '0 auto', padding: 20,
+        display: 'grid', gridTemplateColumns: '360px 1fr', gap: 16,
+      }}>
+        {/* Left column: inputs */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {mode === 'old_vs_new' ? (
+            <Mode1Inputs inputs={mode1} update={updateMode1} mtr={mtr} />
+          ) : (
+            <Mode2Inputs
+              inputs={mode2}
+              update={updateMode2}
+              effectiveSalePrice={mode2Effective.sale_price}
+              salePriceOverridden={salePriceOverridden}
+              setSalePriceOverridden={setSalePriceOverridden}
+              mtr={mtr}
+            />
+          )}
+        </div>
+
+        {/* Right column: results */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {mode === 'specific' && result.bucket && !result.error && (
+            <TimelineStrip
+              purchaseDate={mode2.purchase_date}
+              saleDate={mode2.sale_date}
+              isPreCgt={mode2.is_pre_cgt}
+              bucket={result.bucket}
+            />
+          )}
+
+          {/* Headline sentence */}
+          <div style={{
+            fontFamily: FONT_HEAD, fontSize: 19, lineHeight: 1.4, fontStyle: 'italic',
+            color: C.textPrimary, padding: '4px 0',
+          }}>
+            {result.error ? `Error: ${result.error}` : (result.headline || '')}
+          </div>
+
+          {/* Summary cards */}
+          {!result.error && (
+            <SummaryCards mode={mode} result={result} verdict={verdict} />
+          )}
+
+          {/* Action row */}
+          {!result.error && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={copySummary} style={pillButton(copied)}>
+                {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy summary'}
+              </button>
+              <button onClick={copyLink} style={pillButton(false)}>
+                <LinkIcon size={13} /> Copy link
+              </button>
+              <button onClick={() => setAssumptionsOpen(true)} style={pillButton(false)}>
+                <Info size={13} /> Assumptions
+              </button>
+            </div>
+          )}
+
+          {/* Chart card */}
+          {!result.error && chartData.length > 0 && (
+            <Card>
+              {/* Tabs */}
+              <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 12 }}>
+                {[
+                  { id: 'after_tax', label: 'After-tax proceeds' },
+                  { id: 'effective_rate', label: 'Effective rate' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setChartTab(tab.id)}
+                    style={{
+                      border: 'none', background: 'transparent', cursor: 'pointer',
+                      padding: '8px 14px', fontSize: 13, fontWeight: 600, fontFamily: FONT_BODY,
+                      color: chartTab === tab.id ? C.textPrimary : C.textMuted,
+                      borderBottom: chartTab === tab.id ? `2px solid ${C.teal}` : '2px solid transparent',
+                      marginBottom: -1,
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: C.teal, fontStyle: 'italic', marginBottom: 8 }}>
+                {chartTab === 'after_tax'
+                  ? 'Best for showing the dollar impact of the regime change.'
+                  : 'Best for understanding how the new rules tax real gains.'}
+              </div>
+              <MainChart data={chartData} tab={chartTab} xLabel={mode === 'old_vs_new' ? 'Holding period (years)' : 'Sale year'} />
+              <DiffChart data={chartData} tab={chartTab} xLabel={mode === 'old_vs_new' ? 'Years' : 'Year'} />
+            </Card>
+          )}
+
+          {/* Year-by-year table */}
+          {mode === 'specific' && yearByYearRows.length > 0 && !result.error && (
+            <Card>
+              <CardHeader title="Year-by-year detail" subtitle={`Projection from ${yearByYearRows[0].year} to ${yearByYearRows[yearByYearRows.length - 1].year} using ${fmtPct(mode2.growth_rate)} growth.`} />
+              <DetailTable rows={yearByYearRows} />
+            </Card>
+          )}
+
+          {/* Footer note */}
+          <div style={{ fontSize: 11, color: C.textMuted, padding: '8px 4px', lineHeight: 1.5 }}>
+            Shares only in v1. Property follows similar mechanics but adds cost base complexity not modelled here. Tax position assumes Australian resident individual; SMSF (1/3 discount), trusts, foreign residents, capital losses, and ESS are out of scope.
+            Subject to final legislation.
+          </div>
+        </div>
+      </div>
+
+      {/* Modals */}
+      {paramsOpen && <ParamsModal onClose={() => setParamsOpen(false)} />}
+      {assumptionsOpen && !result.error && (
+        <AssumptionsModal diagnostics={result.diagnostics || {}} onClose={() => setAssumptionsOpen(false)} />
+      )}
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Sub-components: inputs
+// ----------------------------------------------------------------------------
+
+function Mode1Inputs({ inputs, update, mtr }) {
+  return (
+    <Card>
+      <CardHeader title="Scenario inputs" subtitle="Hypothetical asset under both regimes." />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div>
+          <Label>Purchase price</Label>
+          <NumberInput value={inputs.purchase_price} onChange={(v) => update({ purchase_price: v })} />
+        </div>
+        <div>
+          <Label>Annual nominal return</Label>
+          <Slider
+            value={inputs.return_rate * 100}
+            onChange={(v) => update({ return_rate: v / 100 })}
+            min={0} max={15} step={0.1}
+            format={(v) => `${v.toFixed(1)}%`}
+          />
+        </div>
+        <div>
+          <Label>Annual inflation</Label>
+          <Slider
+            value={inputs.inflation * 100}
+            onChange={(v) => update({ inflation: v / 100 })}
+            min={0} max={6} step={0.1}
+            format={(v) => `${v.toFixed(1)}%`}
+          />
+        </div>
+        <div>
+          <Label>Holding period</Label>
+          <Slider
+            value={inputs.holding_years}
+            onChange={(v) => update({ holding_years: v })}
+            min={1} max={30} step={1}
+            format={(v) => `${v} yr`}
+          />
+        </div>
+        <div>
+          <Label hint={`MTR: ${fmtPct(mtr, 0)} + 2% Medicare = ${fmtPct(mtr + 0.02, 0)}`}>Other taxable income at sale</Label>
+          <NumberInput value={inputs.other_income} onChange={(v) => update({ other_income: v })} />
+        </div>
+        <div>
+          <Label>Income support recipient</Label>
+          <Toggle
+            value={inputs.income_support_recipient}
+            onChange={(v) => update({ income_support_recipient: v })}
+            options={[{ value: false, label: 'No' }, { value: true, label: 'Yes' }]}
+          />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, setSalePriceOverridden, mtr }) {
+  const purchaseBeforeCutoff = new Date(inputs.purchase_date) < LEG.newRulesStart;
+  return (
+    <>
+      <Card>
+        <CardHeader title="Asset details" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <Label>Purchase date</Label>
+            <DateInput value={inputs.purchase_date} onChange={(v) => update({ purchase_date: v })} />
+          </div>
+          <div>
+            <Label>Pre-1985 asset (pre-CGT)</Label>
+            <Toggle
+              value={inputs.is_pre_cgt}
+              onChange={(v) => update({
+                is_pre_cgt: v,
+                valuation_method: v ? 'use_entered_value' : inputs.valuation_method,
+              })}
+              options={[{ value: false, label: 'No' }, { value: true, label: 'Yes' }]}
+            />
+          </div>
+          {!inputs.is_pre_cgt && (
+            <>
+              <div>
+                <Label>Purchase price</Label>
+                <NumberInput value={inputs.purchase_price} onChange={(v) => update({ purchase_price: v })} />
+              </div>
+              <div>
+                <Label>Acquisition costs</Label>
+                <NumberInput value={inputs.acquisition_costs} onChange={(v) => update({ acquisition_costs: v })} />
+              </div>
+              <div>
+                <Label>Capital improvements</Label>
+                <NumberInput value={inputs.capital_improvements} onChange={(v) => update({ capital_improvements: v })} />
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Sale assumptions" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <Label>Sale date</Label>
+            <DateInput value={inputs.sale_date} onChange={(v) => update({ sale_date: v })} />
+          </div>
+          <div>
+            <Label>Annual growth assumption</Label>
+            <Slider
+              value={inputs.growth_rate * 100}
+              onChange={(v) => update({ growth_rate: v / 100 })}
+              min={0} max={15} step={0.1}
+              format={(v) => `${v.toFixed(1)}%`}
+            />
+          </div>
+          <div>
+            <Label>Annual inflation</Label>
+            <Slider
+              value={inputs.inflation * 100}
+              onChange={(v) => update({ inflation: v / 100 })}
+              min={0} max={6} step={0.1}
+              format={(v) => `${v.toFixed(1)}%`}
+            />
+          </div>
+          <div>
+            <Label hint={salePriceOverridden ? 'overridden' : 'derived'}>Sale price</Label>
+            <NumberInput
+              value={salePriceOverridden ? inputs.sale_price : effectiveSalePrice}
+              onChange={(v) => {
+                setSalePriceOverridden(true);
+                update({ sale_price: v });
+              }}
+            />
+            {salePriceOverridden && (
+              <button
+                onClick={() => { setSalePriceOverridden(false); update({ sale_price: 0 }); }}
+                style={{
+                  marginTop: 4, background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: C.teal, fontSize: 11, padding: 0,
+                }}
+              >
+                Reset to derived
+              </button>
+            )}
+          </div>
+          <div>
+            <Label>Sale costs</Label>
+            <NumberInput value={inputs.sale_costs} onChange={(v) => update({ sale_costs: v })} />
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Tax position" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <Label hint={`MTR: ${fmtPct(mtr, 0)}`}>Other taxable income at sale year</Label>
+            <NumberInput value={inputs.other_income} onChange={(v) => update({ other_income: v })} />
+          </div>
+          <div>
+            <Label>Income support recipient</Label>
+            <Toggle
+              value={inputs.income_support_recipient}
+              onChange={(v) => update({ income_support_recipient: v })}
+              options={[{ value: false, label: 'No' }, { value: true, label: 'Yes' }]}
+            />
+          </div>
+          {(purchaseBeforeCutoff || inputs.is_pre_cgt) && (
+            <div>
+              <Label>Valuation method</Label>
+              <Toggle
+                value={inputs.valuation_method}
+                onChange={(v) => !inputs.is_pre_cgt && update({ valuation_method: v })}
+                options={[
+                  { value: 'ATO_formula', label: 'ATO formula' },
+                  { value: 'use_entered_value', label: 'Use entered value' },
+                ]}
+              />
+              {inputs.is_pre_cgt && (
+                <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>
+                  Pre-CGT requires user-entered market value at 1 July 2027.
+                </div>
+              )}
+            </div>
+          )}
+          {(inputs.valuation_method === 'use_entered_value' || inputs.is_pre_cgt) && (
+            <div>
+              <Label>
+                {inputs.is_pre_cgt ? 'Market value at 1 July 2027' : 'Value at 1 July 2027'}
+              </Label>
+              <NumberInput value={inputs.value_2027} onChange={(v) => update({ value_2027: v })} />
+            </div>
+          )}
+        </div>
+      </Card>
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Summary cards
+// ----------------------------------------------------------------------------
+
+function SummaryCards({ mode, result, verdict }) {
+  const toneStyles = {
+    good: { bg: C.healthyBg, fg: C.healthyText, border: C.healthy },
+    bad: { bg: C.riskBg, fg: C.riskText, border: C.risk },
+    warn: { bg: C.warningBg, fg: C.warningText, border: C.warning },
+    neutral: { bg: C.offWhite, fg: C.textSecondary, border: C.border },
+  };
+  const v = verdict ? toneStyles[verdict.tone] : toneStyles.neutral;
+
+  let card1, card2, diff, card1Label, card2Label;
+  if (mode === 'old_vs_new') {
+    card1Label = 'Tax under old rules';
+    card2Label = 'Tax under new rules';
+    card1 = result.oldRules.taxOnGain;
+    card2 = result.newRules.taxOnGain;
+    diff = card2 - card1;
+  } else {
+    card1Label = 'After-tax proceeds (actual)';
+    card2Label = 'After-tax (old rules counterfactual)';
+    card1 = result.actual?.afterTaxProceeds || result.newRules?.afterTaxProceeds || 0;
+    card2 = result.oldRules?.afterTaxProceeds || 0;
+    diff = card1 - card2;
+  }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <Card style={{ padding: 16 }}>
+        <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+          {card1Label}
+        </div>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 26, fontWeight: 700, color: mode === 'old_vs_new' ? C.oldRules : C.textPrimary }}>
+          {fmt(card1)}
+        </div>
+      </Card>
+      <Card style={{ padding: 16 }}>
+        <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+          {card2Label}
+        </div>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 26, fontWeight: 700, color: mode === 'old_vs_new' ? C.newRules : C.textPrimary }}>
+          {fmt(card2)}
+        </div>
+      </Card>
+      <Card style={{ padding: 16 }}>
+        <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+          {mode === 'old_vs_new' ? 'Δ Tax' : 'Δ After-tax proceeds'}
+        </div>
+        <div style={{
+          fontFamily: FONT_HEAD, fontSize: 26, fontWeight: 700,
+          color: (mode === 'old_vs_new' ? diff > 0 : diff < 0) ? C.risk : C.healthy,
+        }}>
+          {diff >= 0 ? '+' : ''}{fmt(diff)}
+        </div>
+      </Card>
+      <Card style={{ padding: 16, background: v.bg, borderColor: v.border }}>
+        <div style={{ fontSize: 11, color: v.fg, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+          Verdict
+        </div>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 18, fontWeight: 700, color: v.fg }}>
+          {verdict?.label || '—'}
+        </div>
+        <div style={{ fontSize: 11, color: v.fg, marginTop: 4, opacity: 0.85 }}>
+          {verdict?.desc || ''}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Charts
+// ----------------------------------------------------------------------------
+
+function MainChart({ data, tab, xLabel }) {
+  const isPct = tab === 'effective_rate';
+  const keyOld = isPct ? 'oldRate' : 'old';
+  const keyNew = isPct ? 'newRate' : 'new';
+
+  // Find crossover (sign change in new - old)
+  let crossover = null;
+  for (let i = 1; i < data.length; i++) {
+    const a = data[i - 1][keyNew] - data[i - 1][keyOld];
+    const b = data[i][keyNew] - data[i][keyOld];
+    if (a * b < 0) {
+      crossover = data[i].x;
+      break;
+    }
+  }
+
+  return (
+    <div style={{ width: '100%', height: 290 }}>
+      <ResponsiveContainer>
+        <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 4 }}>
+          <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="xLabel"
+            stroke={C.textSubtle}
+            tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
+            label={{ value: xLabel, position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
+          />
+          <YAxis
+            stroke={C.textSubtle}
+            tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
+            domain={['dataMin', 'dataMax']}
+            tickFormatter={isPct ? (v) => `${v.toFixed(0)}%` : fmtK}
+            width={60}
+          />
+          <Tooltip content={<ChartTooltip suffix={isPct ? '%' : '$'} />} />
+          <Legend verticalAlign="top" height={28} iconType="line" formatter={(value) => (
+            <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>
+          )} />
+          <Line type="monotone" dataKey={keyOld} stroke={C.oldRules} strokeWidth={2} dot={false} name="Old rules" />
+          <Line type="monotone" dataKey={keyNew} stroke={C.newRules} strokeWidth={2} dot={false} name="New rules" />
+          {crossover != null && (
+            <ReferenceLine x={crossover} stroke={C.textSubtle} strokeDasharray="4 4" label={{ value: 'crossover', fontSize: 10, fill: C.textMuted, position: 'top' }} />
+          )}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function DiffChart({ data, tab, xLabel }) {
+  const isPct = tab === 'effective_rate';
+  // Split the series into positive and negative components so we can fill
+  // green above zero and red below zero in a single chart.
+  const points = data.map((d) => {
+    const diff = isPct ? d.newRate - d.oldRate : d.new - d.old;
+    return {
+      x: d.x,
+      xLabel: d.xLabel,
+      pos: diff >= 0 ? diff : 0,
+      neg: diff < 0 ? diff : 0,
+    };
+  });
+  return (
+    <div style={{ width: '100%', height: 110, marginTop: 6 }}>
+      <ResponsiveContainer>
+        <AreaChart data={points} margin={{ top: 0, right: 16, bottom: 4, left: 4 }}>
+          <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="xLabel"
+            stroke={C.textSubtle}
+            tick={{ fontSize: 10, fontFamily: FONT_MONO, fill: C.textMuted }}
+          />
+          <YAxis
+            stroke={C.textSubtle}
+            tick={{ fontSize: 10, fontFamily: FONT_MONO, fill: C.textMuted }}
+            tickFormatter={isPct ? (v) => `${v.toFixed(0)}%` : fmtK}
+            width={60}
+          />
+          <ReferenceLine y={0} stroke={C.textMuted} />
+          <Tooltip
+            formatter={(value) => isPct ? `${value.toFixed(1)}%` : fmt(value)}
+            labelStyle={{ fontSize: 11, color: C.textMuted }}
+            contentStyle={{ fontSize: 12, fontFamily: FONT_BODY, padding: 8, border: `1px solid ${C.border}`, borderRadius: 6 }}
+          />
+          <Area type="monotone" dataKey="pos" stroke={C.healthy} strokeWidth={1} fill={C.healthy} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New better" />
+          <Area type="monotone" dataKey="neg" stroke={C.risk} strokeWidth={1} fill={C.risk} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New worse" />
+        </AreaChart>
+      </ResponsiveContainer>
+      <div style={{ fontSize: 10, color: C.textMuted, marginTop: -2, paddingLeft: 6 }}>
+        Difference (new − old). Above zero = new rules better, below zero = new rules costlier.
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Small bits
+// ----------------------------------------------------------------------------
+
+function pillButton(active) {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    background: active ? C.healthyBg : C.white,
+    border: `1px solid ${active ? C.healthy : C.border}`,
+    color: active ? C.healthyText : C.textSecondary,
+    padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
+    fontSize: 12, fontFamily: FONT_BODY, fontWeight: 600,
+  };
+}
