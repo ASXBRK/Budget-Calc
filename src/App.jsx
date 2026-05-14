@@ -13,7 +13,7 @@ import {
   Legend,
 } from 'recharts';
 import { Copy, Link as LinkIcon, X, Settings, Info, Check } from 'lucide-react';
-import { runCGTProjection, runCGTSeries, LEG } from './engine.js';
+import { runCGTProjection, LEG } from './engine.js';
 
 // ----------------------------------------------------------------------------
 // Design tokens
@@ -46,6 +46,12 @@ const BUCKET_EXPLAINERS = {
 
 const PRE_CGT_VALUE_INFO = "Pre-1985 assets are exempt under existing CGT law. From 1 July 2027 the announced rules bring them into the CGT net; the standard transitional approach (and the assumption this tool makes) is a deemed market value cost base at 1 July 2027, so only gains accruing from that date are taxable. Treasury hasn't yet specified the cost base treatment, so flag this as illustrative when discussing with the client. A formal valuation isn't required for modelling — a reasonable estimate is fine.";
 
+const INCOME_SUPPORT_INFO = 'Affects the new-rules calculation only: removes the 30% minimum tax floor on the gain. Per the 2026 Budget, recipients of Centrelink income support (Age Pension, JobSeeker, Disability Support Pension, Parenting Payment, etc.) pay their marginal rate without the minimum top-up. This only changes the outcome when the marginal rate on the gain would otherwise be below 30% — for clients whose income places them at or above the 30% bracket, toggling Yes has no visible effect.';
+
+const VALUATION_INFO = "For an asset bought before 1 July 2027 and sold after, the value at 1 July 2027 splits the gain into pre and post portions. ATO formula estimates this using compound growth from purchase to sale. Use 'Enter value' if you have a real market valuation at that date.";
+
+const CAPITAL_WORKS_INFO = "Division 43 capital works deductions claimed over the holding period reduce the cost base for CGT purposes. If you've claimed $10,000 of building depreciation, enter $10,000 here. Don't include plant & equipment (Div 40) — that's separate and may not affect cost base if acquired after May 2017.";
+
 const HIDE_SPINNERS = `
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -54,6 +60,8 @@ const HIDE_SPINNERS = `
   .slider-track::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: ${C.teal}; cursor: pointer; border: 2px solid ${C.white}; box-sizing: border-box; }
   .slider-track::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: ${C.teal}; cursor: pointer; border: 2px solid ${C.white}; }
 `;
+
+const MS_PER_YEAR = 365.25 * 24 * 3600 * 1000;
 
 // ----------------------------------------------------------------------------
 // Format helpers
@@ -90,28 +98,29 @@ const fmtDate = (d) => {
 // ----------------------------------------------------------------------------
 
 const KEY_MAP = {
-  mode: 'mode',
-  purchase_price: 'pp',
-  return_rate: 'rr',
-  inflation: 'inf',
-  holding_years: 'hy',
-  other_income: 'oi',
-  income_support_recipient: 'is',
+  asset_type: 'at',
   purchase_date: 'pd',
+  purchase_price: 'pp',
   acquisition_costs: 'ac',
   capital_improvements: 'ci',
   depreciation_claimed: 'dep',
-  asset_type: 'at',
-  sale_date: 'sd',
-  sale_price: 'sp',
   sale_costs: 'sc',
-  growth_rate: 'gr',
-  valuation_method: 'vm',
+  return_rate: 'rr',
+  inflation: 'inf',
+  other_income: 'oi',
+  income_support_recipient: 'is',
   value_2027: 'v27',
+  valuation_method: 'vm',
+  focus_years: 'fy',
+  axis_view: 'av',
 };
 const REVERSE_KEY_MAP = Object.fromEntries(
   Object.entries(KEY_MAP).map(([k, v]) => [v, k])
 );
+const STRING_KEYS = new Set([
+  'asset_type', 'valuation_method', 'axis_view', 'purchase_date',
+]);
+const BOOLEAN_KEYS = new Set(['income_support_recipient']);
 
 function encodeState(state) {
   const params = new URLSearchParams();
@@ -138,14 +147,9 @@ function decodeState(search) {
     if (shortKey === 'v') continue;
     const longKey = REVERSE_KEY_MAP[shortKey];
     if (!longKey) continue;
-    if (longKey === 'income_support_recipient') {
+    if (BOOLEAN_KEYS.has(longKey)) {
       out[longKey] = value === '1';
-    } else if (
-      longKey === 'mode' ||
-      longKey === 'valuation_method' ||
-      longKey === 'asset_type' ||
-      longKey.endsWith('_date')
-    ) {
+    } else if (STRING_KEYS.has(longKey)) {
       out[longKey] = value;
     } else {
       const num = Number(value);
@@ -365,7 +369,7 @@ function Toggle({ value, onChange, options, disabled }) {
 }
 
 // ----------------------------------------------------------------------------
-// Timeline strip — labels below the bar, no negative positioning
+// Timeline strip
 // ----------------------------------------------------------------------------
 
 function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
@@ -374,7 +378,6 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
   const sdate = saleDate ? new Date(saleDate) : null;
   if (!pdate || !sdate) return null;
 
-  // Window: include both dates with a small buffer around 1 Jul 2027
   const buffer = 365 * 24 * 3600 * 1000;
   const earliest = new Date(Math.min(pdate.getTime(), start.getTime() - buffer));
   const latest = new Date(Math.max(sdate.getTime(), start.getTime() + buffer));
@@ -394,10 +397,6 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
 
   const bucketDesc = LEG.buckets[bucket]?.split(' — ')[1] || '';
 
-  // Avoid label collisions under the bar by giving each its own slot
-  // when too close. We render Bought / 1 Jul 2027 / Sold each anchored to
-  // its position; the parent has overflow: visible so overlaps are tolerated.
-
   return (
     <Card style={{ padding: 16 }}>
       <div style={{
@@ -407,7 +406,6 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
         Bucket {bucket} · {bucketDesc}
       </div>
 
-      {/* Bar */}
       <div style={{
         position: 'relative', height: 40, background: C.offWhite,
         borderRadius: 4, border: `1px solid ${C.border}`,
@@ -439,7 +437,6 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
             {postLabel}
           </div>
         )}
-        {/* 1 July 2027 dashed line (no label here — sits below) */}
         <div style={{
           position: 'absolute', top: 0, bottom: 0,
           left: `${cutoffPct}%`,
@@ -447,14 +444,9 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
         }} />
       </div>
 
-      {/* Labels under the bar — three slots */}
       <div style={{ position: 'relative', height: 18, marginTop: 6 }}>
         <DateMarker pct={purchasePct} label={`Bought ${fmtDate(pdate)}`} />
-        <DateMarker
-          pct={cutoffPct}
-          label="1 Jul 2027"
-          strong
-        />
+        <DateMarker pct={cutoffPct} label="1 Jul 2027" strong />
         <DateMarker pct={salePct} label={`Sold ${fmtDate(sdate)}`} />
       </div>
     </Card>
@@ -462,8 +454,6 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
 }
 
 function DateMarker({ pct, label, strong }) {
-  // Keep labels inside the box by clamping anchor and choosing text-anchor
-  // based on position.
   const anchor =
     pct < 8 ? 'flex-start' : pct > 92 ? 'flex-end' : 'center';
   const transform =
@@ -483,7 +473,7 @@ function DateMarker({ pct, label, strong }) {
 }
 
 // ----------------------------------------------------------------------------
-// Tooltip for charts
+// Tooltips
 // ----------------------------------------------------------------------------
 
 function ChartTooltip({ active, payload, label, suffix }) {
@@ -511,10 +501,44 @@ function ChartTooltip({ active, payload, label, suffix }) {
         </span>
       </div>
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between' }}>
-        <span style={{ color: C.textMuted }}>Δ</span>
+        <span style={{ color: C.textMuted }}>Difference</span>
         <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color: diff > 0 ? C.risk : C.healthy }}>
           {isPct ? `${diff.toFixed(1)}%` : fmt(diff)}
         </span>
+      </div>
+    </div>
+  );
+}
+
+function DiffTooltip({ active, payload, label, isPct }) {
+  if (!active || !payload || !payload.length) return null;
+  const pos = payload.find((p) => p.dataKey === 'pos')?.value || 0;
+  const neg = payload.find((p) => p.dataKey === 'neg')?.value || 0;
+  const diff = pos + neg;
+  const epsilon = isPct ? 0.001 : 0.5;
+  let labelText, color;
+  if (diff < -epsilon) {
+    labelText = 'New worse';
+    color = C.risk;
+  } else if (diff > epsilon) {
+    labelText = 'New better';
+    color = C.healthy;
+  } else {
+    labelText = 'Same';
+    color = C.textMuted;
+  }
+  const valueText = isPct
+    ? `${Math.abs(diff).toFixed(1)}%`
+    : fmt(Math.abs(diff));
+  return (
+    <div style={{
+      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
+      padding: 10, fontSize: 12, fontFamily: FONT_BODY, minWidth: 160,
+    }}>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{label}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ color }}>{labelText}</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color }}>{valueText}</span>
       </div>
     </div>
   );
@@ -559,7 +583,7 @@ function ParamsModal({ onClose }) {
     ['Pre-CGT cutoff', fmtDate(LEG.preCgtCutoff)],
     ['Minimum tax rate', fmtPct(LEG.minimumTaxRate, 0)],
     ['Old discount rate', fmtPct(LEG.oldDiscountRate, 0)],
-    ['Super fund discount', fmtPct(LEG.superDiscountRate, 1) + ' (not modelled v1)'],
+    ['Super fund discount', fmtPct(LEG.superDiscountRate, 1) + ' (not modelled)'],
     ['Medicare levy (high-income)', fmtPct(LEG.medicareLevy, 0)],
     ['Medicare lower threshold (single)', fmt(LEG.medicareLowerSingle)],
     ['Medicare upper threshold (single)', fmt(LEG.medicareUpperSingle)],
@@ -642,7 +666,6 @@ function BucketsDiagram() {
   );
 }
 
-// Plain-English assumptions modal
 function AssumptionsModal({ diagnostics, onClose }) {
   const items = [
     {
@@ -671,7 +694,7 @@ function AssumptionsModal({ diagnostics, onClose }) {
     },
     {
       label: 'Capital losses',
-      text: 'Not modelled in this version. Losses carry forward against future gains under both regimes, but the tool currently shows gain scenarios only.',
+      text: 'Not modelled. Losses carry forward against future gains under both regimes, but the tool currently shows gain scenarios only.',
     },
     {
       label: 'Legislation status',
@@ -704,186 +727,213 @@ function AssumptionsModal({ diagnostics, onClose }) {
 // Main App
 // ----------------------------------------------------------------------------
 
-const DEFAULT_MODE1 = {
-  mode: 'old_vs_new',
-  purchase_price: 500000,
-  return_rate: 0.06,
-  inflation: 0.025,
-  holding_years: 10,
-  other_income: 100000,
-  income_support_recipient: false,
-};
-
 const today = new Date();
-const DEFAULT_MODE2 = {
-  mode: 'specific',
+const DEFAULT_INPUTS = {
   asset_type: 'shares',
-  purchase_date: '2020-07-01',
+  purchase_date: today.toISOString().slice(0, 10),
   purchase_price: 100000,
   acquisition_costs: 500,
   capital_improvements: 0,
   depreciation_claimed: 0,
-  sale_date: `${today.getFullYear() + 5}-06-30`,
-  sale_price: 0, // derived
-  sale_costs: 500,
-  growth_rate: 0.06,
+  sale_costs: 0,
+  return_rate: 0.06,
   inflation: 0.025,
   other_income: 100000,
   income_support_recipient: false,
-  valuation_method: 'ATO_formula',
   value_2027: 0,
+  valuation_method: 'ATO_formula',
+  focus_years: 10,
+  axis_view: 'holding_period',
 };
 
+const HOLDING_MIN = 1;
+const HOLDING_MAX = 16;
+const SALE_YEAR_SPAN = 25;
+
+function buildCostBase(inputs, isPreCgt) {
+  if (isPreCgt) return 0;
+  const dep = inputs.asset_type === 'property' ? (inputs.depreciation_claimed || 0) : 0;
+  return (inputs.purchase_price || 0) +
+    (inputs.acquisition_costs || 0) +
+    (inputs.capital_improvements || 0) -
+    dep;
+}
+
+function derivedSalePrice({ inputs, isPreCgt, saleDate, costBase, yearsFromPurchase }) {
+  if (isPreCgt) {
+    const yearsPost = Math.max((saleDate - new Date(LEG.newRulesStart)) / MS_PER_YEAR, 0);
+    return (inputs.value_2027 || 0) * Math.pow(1 + inputs.return_rate, yearsPost);
+  }
+  return costBase * Math.pow(1 + inputs.return_rate, yearsFromPurchase);
+}
+
 export default function App() {
-  const [mode, setMode] = useState('old_vs_new');
-  const [mode1, setMode1] = useState(DEFAULT_MODE1);
-  const [mode2, setMode2] = useState(DEFAULT_MODE2);
+  const [inputs, setInputs] = useState(DEFAULT_INPUTS);
   const [chartTab, setChartTab] = useState('after_tax');
   const [paramsOpen, setParamsOpen] = useState(false);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
-  const [salePriceOverridden, setSalePriceOverridden] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Hydrate from URL on first mount
   useEffect(() => {
     const decoded = decodeState(window.location.search);
-    if (decoded.mode === 'specific') {
-      setMode('specific');
-      setMode2((m) => ({ ...m, ...decoded }));
-      if (decoded.sale_price) setSalePriceOverridden(true);
-    } else if (decoded.mode === 'old_vs_new') {
-      setMode('old_vs_new');
-      setMode1((m) => ({ ...m, ...decoded }));
+    if (Object.keys(decoded).length > 0) {
+      setInputs((s) => ({ ...s, ...decoded }));
     }
   }, []);
 
-  // Push state to URL on every change (replace, not push)
   useEffect(() => {
-    const active = mode === 'old_vs_new' ? { ...mode1, mode } : { ...mode2, mode };
-    const qs = encodeState(active);
+    const qs = encodeState(inputs);
     const url = `${window.location.pathname}?${qs}`;
     window.history.replaceState(null, '', url);
-  }, [mode, mode1, mode2]);
+  }, [inputs]);
 
-  const updateMode1 = useCallback((patch) => setMode1((s) => ({ ...s, ...patch })), []);
-  const updateMode2 = useCallback((patch) => setMode2((s) => ({ ...s, ...patch })), []);
+  const update = useCallback((patch) => setInputs((s) => ({ ...s, ...patch })), []);
 
-  // Auto-detected pre-CGT for Mode 2
   const isPreCgt = useMemo(() => {
-    if (!mode2.purchase_date) return false;
-    return new Date(mode2.purchase_date) < LEG.preCgtCutoff;
-  }, [mode2.purchase_date]);
+    if (!inputs.purchase_date) return false;
+    return new Date(inputs.purchase_date) < LEG.preCgtCutoff;
+  }, [inputs.purchase_date]);
 
-  // Derive sale price when not overridden
-  const mode2Effective = useMemo(() => {
-    if (isPreCgt) {
-      // Sale price derived from value_2027 + growth since 1 July 2027
-      const sd = new Date(mode2.sale_date);
-      const yearsPost = Math.max(
-        (sd - new Date(LEG.newRulesStart)) / (365.25 * 24 * 3600 * 1000),
-        0
-      );
-      const derived = (mode2.value_2027 || 0) * Math.pow(1 + mode2.growth_rate, yearsPost);
-      return {
-        ...mode2,
-        is_pre_cgt: true,
-        sale_price: salePriceOverridden ? mode2.sale_price : Math.round(derived),
-      };
-    }
-    if (salePriceOverridden && mode2.sale_price > 0) {
-      return { ...mode2, is_pre_cgt: false };
-    }
-    const pd = new Date(mode2.purchase_date);
-    const sd = new Date(mode2.sale_date);
-    const years = Math.max((sd - pd) / (365.25 * 24 * 3600 * 1000), 0);
-    const dep = mode2.asset_type === 'property' ? (mode2.depreciation_claimed || 0) : 0;
-    const cb = (mode2.purchase_price || 0) + (mode2.acquisition_costs || 0)
-      + (mode2.capital_improvements || 0) - dep;
-    const derived = cb * Math.pow(1 + mode2.growth_rate, years);
-    return { ...mode2, is_pre_cgt: false, sale_price: Math.round(derived) };
-  }, [mode2, salePriceOverridden, isPreCgt]);
+  const costBase = useMemo(
+    () => buildCostBase(inputs, isPreCgt),
+    [inputs, isPreCgt]
+  );
+
+  // Focus scenario: sale = purchase + focus_years
+  const focusScenario = useMemo(() => {
+    const pd = new Date(inputs.purchase_date);
+    const sale = new Date(pd);
+    sale.setFullYear(pd.getFullYear() + Math.round(inputs.focus_years));
+    const sp = derivedSalePrice({
+      inputs,
+      isPreCgt,
+      saleDate: sale,
+      costBase,
+      yearsFromPurchase: inputs.focus_years,
+    });
+    return {
+      ...inputs,
+      mode: 'specific',
+      sale_date: sale.toISOString().slice(0, 10),
+      sale_price: Math.round(sp),
+    };
+  }, [inputs, isPreCgt, costBase]);
 
   const result = useMemo(() => {
     try {
-      if (mode === 'old_vs_new') return runCGTProjection(mode1);
-      return runCGTProjection(mode2Effective);
+      return runCGTProjection(focusScenario);
     } catch (e) {
       return { error: e.message };
     }
-  }, [mode, mode1, mode2Effective]);
+  }, [focusScenario]);
 
-  // Series for charts
   const chartData = useMemo(() => {
     if (result.error) return [];
-    if (mode === 'old_vs_new') {
-      const maxYears = Math.max(1, mode1.holding_years || 1);
-      const series = runCGTSeries(mode1, 'holding_years', [1, maxYears]);
-      return series.map((s, i) => ({
-        x: i + 1,
-        xLabel: `${i + 1}y`,
-        old: s.oldRules?.afterTaxProceeds || 0,
-        new: s.newRules?.afterTaxProceeds || 0,
-        oldRate: (s.oldRules?.effectiveRate || 0) * 100,
-        newRate: (s.newRules?.effectiveRate || 0) * 100,
-      }));
-    }
-    const pd = new Date(mode2.purchase_date);
-    const startYear = Math.max(pd.getFullYear() + 1, 2024);
-    const endYear = startYear + 25;
-    const series = runCGTSeries(
-      { ...mode2Effective, sale_price_derive: true },
-      'sale_year',
-      [startYear, endYear]
-    );
-    return series.map((s) => {
-      const y = new Date(s.saleDate || mode2Effective.sale_date).getFullYear();
-      return {
-        x: y,
-        xLabel: y,
-        old: s.oldRules?.afterTaxProceeds || 0,
-        new: s.actual?.afterTaxProceeds || s.newRules?.afterTaxProceeds || 0,
-        oldRate: (s.oldRules?.effectiveRate || 0) * 100,
-        newRate: (s.actual?.effectiveRate || s.newRules?.effectiveRate || 0) * 100,
-      };
-    });
-  }, [mode, mode1, mode2, mode2Effective, result]);
+    const pd = new Date(inputs.purchase_date);
+    const points = [];
 
-  // Copy summary
+    const buildPoint = (saleDate, years, xValue, xLabel) => {
+      const sp = derivedSalePrice({
+        inputs,
+        isPreCgt,
+        saleDate,
+        costBase,
+        yearsFromPurchase: years,
+      });
+      try {
+        const r = runCGTProjection({
+          ...inputs,
+          mode: 'specific',
+          sale_date: saleDate.toISOString().slice(0, 10),
+          sale_price: Math.round(sp),
+        });
+        return {
+          x: xValue,
+          xLabel,
+          old: r.oldRules?.afterTaxProceeds || 0,
+          new: r.actual?.afterTaxProceeds || r.newRules?.afterTaxProceeds || 0,
+          oldRate: (r.oldRules?.effectiveRate || 0) * 100,
+          newRate: (r.actual?.effectiveRate || r.newRules?.effectiveRate || 0) * 100,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    if (inputs.axis_view === 'sale_year') {
+      const startYear = pd.getFullYear() + 1;
+      const endYear = startYear + SALE_YEAR_SPAN - 1;
+      for (let y = startYear; y <= endYear; y++) {
+        const sale = new Date(`${y}-06-30T00:00:00+10:00`);
+        const years = Math.max((sale - pd) / MS_PER_YEAR, 0);
+        const p = buildPoint(sale, years, y, y);
+        if (p) points.push(p);
+      }
+    } else {
+      for (let h = HOLDING_MIN; h <= HOLDING_MAX; h++) {
+        const sale = new Date(pd);
+        sale.setFullYear(pd.getFullYear() + h);
+        const p = buildPoint(sale, h, h, `${h}y`);
+        if (p) points.push(p);
+      }
+    }
+    return points;
+  }, [inputs, costBase, isPreCgt, result.error]);
+
+  // Where the focus reference line falls on the chart's x-axis
+  const focusX = useMemo(() => {
+    if (inputs.axis_view === 'sale_year') {
+      const pd = new Date(inputs.purchase_date);
+      return pd.getFullYear() + Math.round(inputs.focus_years);
+    }
+    return Math.round(inputs.focus_years);
+  }, [inputs.axis_view, inputs.purchase_date, inputs.focus_years]);
+
+  const verdict = useMemo(() => {
+    if (result.error) return null;
+    const oldVal = result.oldRules?.afterTaxProceeds || 0;
+    const newVal = result.actual?.afterTaxProceeds || 0;
+    const diff = newVal - oldVal;
+    const pct = oldVal > 0 ? Math.abs(diff) / oldVal : 0;
+    if (result.bucket === 'A' && !isPreCgt) {
+      return { tone: 'neutral', label: 'Pre-2027 sale', desc: 'Old rules apply.' };
+    }
+    if (result.bucket === 'D') {
+      return { tone: 'good', label: 'Pre-CGT exempt', desc: 'Pre-2027 gains exempt.' };
+    }
+    if (isPreCgt && result.bucket === 'A') {
+      return { tone: 'good', label: 'Pre-CGT exempt', desc: 'Exempt under both regimes.' };
+    }
+    if (pct < 0.05) return { tone: 'warn', label: 'Within 5%', desc: 'Broadly equivalent outcome.' };
+    if (diff > 0) return { tone: 'good', label: 'New rules cheaper', desc: 'New regime preserves more after-tax value.' };
+    return { tone: 'bad', label: 'New rules costlier', desc: 'New regime costs more.' };
+  }, [result, isPreCgt]);
+
   const copySummary = useCallback(() => {
     const r = result;
-    if (r.error) return;
+    if (r.error || r.result === 'awaiting_value_2027') return;
     const lines = [];
     lines.push(`CGT Estimate — ${fmtDate(new Date())}`);
-    lines.push(`Mode: ${mode === 'old_vs_new' ? 'Old vs New rules' : 'Specific asset'}`);
-    if (mode === 'specific') {
-      const assetType = mode2.asset_type || 'shares';
-      lines.push(`Asset type: ${assetType}`);
-      lines.push(`Purchase: ${fmt(mode2Effective.purchase_price)} on ${fmtDate(mode2.purchase_date)}`);
-      lines.push(`Sale: ${fmt(mode2Effective.sale_price)} on ${fmtDate(mode2.sale_date)}`);
-      lines.push(`Bucket: ${r.bucket} (${LEG.buckets[r.bucket]?.split(' — ')[1] || ''})`);
-      if (r.split) {
-        lines.push(`Pre-1 July 2027 gain (taxable): ${fmt(r.split.prePortionTaxable)}`);
-        lines.push(`Post-1 July 2027 gain (taxable): ${fmt(r.split.postPortionTaxable)}`);
-        lines.push(`Total taxable: ${fmt(r.split.totalTaxable)}`);
-      }
-      lines.push(`Actual tax: ${fmt(r.actual.taxOnGain)}`);
-      lines.push(`Actual after-tax proceeds: ${fmt(r.actual.afterTaxProceeds)}`);
-      lines.push(`Counterfactual old-rules after-tax: ${fmt(r.oldRules.afterTaxProceeds)}`);
-      const diff = r.actual.afterTaxProceeds - r.oldRules.afterTaxProceeds;
-      lines.push(`Difference: ${fmt(Math.abs(diff))} (${diff >= 0 ? 'new regime better' : 'new regime costs more'})`);
-    } else {
-      lines.push(`Inputs: ${fmt(mode1.purchase_price)}, ${fmtPct(mode1.return_rate)} return, ${fmtPct(mode1.inflation)} inflation, ${mode1.holding_years} years`);
-      lines.push(`Old rules tax: ${fmt(r.oldRules.taxOnGain)}`);
-      lines.push(`New rules tax: ${fmt(r.newRules.taxOnGain)}`);
-      const diff = r.newRules.taxOnGain - r.oldRules.taxOnGain;
-      lines.push(`Difference: ${fmt(Math.abs(diff))} (${diff > 0 ? 'new regime costs more' : 'new regime better'})`);
+    lines.push(`Asset type: ${inputs.asset_type}`);
+    lines.push(`Purchase: ${fmt(inputs.purchase_price)} on ${fmtDate(inputs.purchase_date)}`);
+    lines.push(`Sale: ${fmt(focusScenario.sale_price)} on ${fmtDate(focusScenario.sale_date)} (focus ${inputs.focus_years}y holding)`);
+    lines.push(`Bucket: ${r.bucket} (${LEG.buckets[r.bucket]?.split(' — ')[1] || ''})`);
+    if (r.split) {
+      lines.push(`Pre-1 July 2027 gain (taxable): ${fmt(r.split.prePortionTaxable)}`);
+      lines.push(`Post-1 July 2027 gain (taxable): ${fmt(r.split.postPortionTaxable)}`);
+      lines.push(`Total taxable: ${fmt(r.split.totalTaxable)}`);
     }
+    lines.push(`Actual tax: ${fmt(r.actual.taxOnGain)}`);
+    lines.push(`Actual after-tax proceeds: ${fmt(r.actual.afterTaxProceeds)}`);
+    lines.push(`Counterfactual old-rules after-tax: ${fmt(r.oldRules.afterTaxProceeds)}`);
+    const diff = r.actual.afterTaxProceeds - r.oldRules.afterTaxProceeds;
+    lines.push(`Difference: ${fmt(Math.abs(diff))} (${diff >= 0 ? 'new regime better' : 'new regime costs more'})`);
     lines.push('');
     lines.push('— Generated by CGT Reform Calc. Illustrative only. Subject to final legislation.');
     navigator.clipboard.writeText(lines.join('\n'));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
-  }, [result, mode, mode1, mode2, mode2Effective]);
+  }, [result, inputs, focusScenario]);
 
   const copyLink = useCallback(() => {
     navigator.clipboard.writeText(window.location.href);
@@ -891,23 +941,8 @@ export default function App() {
     setTimeout(() => setCopied(false), 1500);
   }, []);
 
-  // Verdict
-  const verdict = useMemo(() => {
-    if (result.error) return null;
-    const oldVal = result.oldRules?.afterTaxProceeds || 0;
-    const newVal = (mode === 'specific' ? result.actual?.afterTaxProceeds : result.newRules?.afterTaxProceeds) || 0;
-    const diff = newVal - oldVal;
-    const pct = oldVal > 0 ? Math.abs(diff) / oldVal : 0;
-    if (mode === 'specific' && result.bucket === 'A') {
-      return { tone: 'neutral', label: 'Pre-2027 sale', desc: 'Old rules apply.' };
-    }
-    if (mode === 'specific' && result.bucket === 'D') {
-      return { tone: 'good', label: 'Pre-CGT exempt', desc: 'Pre-2027 gains exempt.' };
-    }
-    if (pct < 0.05) return { tone: 'warn', label: 'Within 5%', desc: 'Broadly equivalent outcome.' };
-    if (diff > 0) return { tone: 'good', label: 'New rules cheaper', desc: 'New regime preserves more after-tax value.' };
-    return { tone: 'bad', label: 'New rules costlier', desc: 'New regime costs more.' };
-  }, [result, mode]);
+  const awaitingValue = result.result === 'awaiting_value_2027';
+  const showResults = !result.error && !awaitingValue;
 
   return (
     <>
@@ -922,14 +957,6 @@ export default function App() {
         <div style={{ fontFamily: FONT_HEAD, fontWeight: 700, fontSize: 16, color: C.textPrimary }}>
           <span style={{ color: C.teal }}>CGT</span> Reform Calc
         </div>
-        <Toggle
-          value={mode}
-          onChange={setMode}
-          options={[
-            { value: 'old_vs_new', label: 'Old vs New rules' },
-            { value: 'specific', label: 'Specific asset' },
-          ]}
-        />
         <button
           onClick={() => setParamsOpen(true)}
           style={{
@@ -944,17 +971,22 @@ export default function App() {
 
       {/* Intro */}
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '20px 20px 0' }}>
-        <Card>
-          <div style={{ fontSize: 13, color: C.textSecondary, lineHeight: 1.6 }}>
-            The May 2026 Federal Budget proposes replacing the 50% CGT discount with cost-base indexation plus a 30% minimum tax on real gains, for CGT events on or after 1 July 2027. This tool models the impact in two ways: <strong style={{ color: C.textPrimary }}>Old vs New rules</strong> compares the regimes for a hypothetical asset at any return, inflation, and holding period; <strong style={{ color: C.textPrimary }}>Specific asset</strong> projects a real client's holding using actual purchase and sale dates. Calculations follow the Budget paper plus published industry analysis (Treasury worked examples, Pitcher Partners, BDO, NAB); the reform is not yet legislated and treatment may change.
+        <Card style={{ padding: 22 }}>
+          <div style={{ fontSize: 15, color: C.textSecondary, lineHeight: 1.7 }}>
+            <p style={{ margin: 0 }}>
+              The May 2026 Federal Budget proposes replacing the 50% CGT discount with cost-base indexation plus a 30% minimum tax on real gains, for CGT events on or after 1 July 2027. This tool models the impact for a single asset across different holding periods or sale years. Calculations follow the Budget paper and published industry analysis.
+            </p>
+            <p style={{ margin: '12px 0 0' }}>
+              The reform is not yet legislated. The final law may differ from what is modelled here. This tool is for illustration and education only and is not financial, tax, or investment advice.
+            </p>
           </div>
           <div style={{
             fontSize: 12, color: C.textSecondary, lineHeight: 1.5,
             borderLeft: `3px solid ${C.teal}`,
             background: C.offWhite,
-            padding: '8px 12px', marginTop: 12,
+            padding: '8px 12px', marginTop: 14,
           }}>
-            <strong style={{ color: C.textPrimary }}>Scope:</strong> v1 models individual taxpayers only. SMSF, trust, and company treatment is planned for a future version.
+            <strong style={{ color: C.textPrimary }}>Scope:</strong> Models individual taxpayers only. SMSF, trust, and company treatment not included.
           </div>
         </Card>
       </div>
@@ -966,27 +998,16 @@ export default function App() {
       }}>
         {/* Left column: inputs */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {mode === 'old_vs_new' ? (
-            <Mode1Inputs inputs={mode1} update={updateMode1} />
-          ) : (
-            <Mode2Inputs
-              inputs={mode2}
-              update={updateMode2}
-              effectiveSalePrice={mode2Effective.sale_price}
-              salePriceOverridden={salePriceOverridden}
-              setSalePriceOverridden={setSalePriceOverridden}
-              isPreCgt={isPreCgt}
-            />
-          )}
+          <UnifiedInputs inputs={inputs} update={update} isPreCgt={isPreCgt} />
         </div>
 
         {/* Right column: results */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {mode === 'specific' && result.bucket && !result.error && (
+          {showResults && result.bucket && (
             <>
               <TimelineStrip
-                purchaseDate={mode2.purchase_date}
-                saleDate={mode2.sale_date}
+                purchaseDate={inputs.purchase_date}
+                saleDate={focusScenario.sale_date}
                 isPreCgt={isPreCgt}
                 bucket={result.bucket}
               />
@@ -999,23 +1020,22 @@ export default function App() {
             </>
           )}
 
-          {/* Headline sentence */}
           <div style={{
             fontFamily: FONT_HEAD, fontSize: 19, lineHeight: 1.4, fontStyle: 'italic',
             color: C.textPrimary, padding: '4px 0',
           }}>
             {result.error
               ? `Error: ${result.error}`
-              : result.result === 'awaiting_value_2027'
+              : awaitingValue
                 ? 'Enter a market value at 1 July 2027 in Asset details to model this pre-CGT asset.'
                 : (result.headline || '')}
           </div>
 
-          {!result.error && result.result !== 'awaiting_value_2027' && (
-            <SummaryCards mode={mode} result={result} verdict={verdict} />
+          {showResults && (
+            <SummaryCards result={result} verdict={verdict} />
           )}
 
-          {!result.error && result.result !== 'awaiting_value_2027' && (
+          {showResults && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button onClick={copySummary} style={pillButton(copied)}>
                 {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy summary'}
@@ -1029,42 +1049,91 @@ export default function App() {
             </div>
           )}
 
-          {!result.error && result.result !== 'awaiting_value_2027' && chartData.length > 0 && (
+          {showResults && chartData.length > 0 && (
             <Card>
-              <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 12 }}>
-                {[
-                  { id: 'after_tax', label: 'After-tax proceeds' },
-                  { id: 'effective_rate', label: 'Effective rate' },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setChartTab(tab.id)}
-                    style={{
-                      border: 'none', background: 'transparent', cursor: 'pointer',
-                      padding: '8px 14px', fontSize: 13, fontWeight: 600, fontFamily: FONT_BODY,
-                      color: chartTab === tab.id ? C.textPrimary : C.textMuted,
-                      borderBottom: chartTab === tab.id ? `2px solid ${C.teal}` : '2px solid transparent',
-                      marginBottom: -1,
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+              {/* Chart header: tabs + axis-view toggle */}
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                borderBottom: `1px solid ${C.border}`, marginBottom: 12,
+              }}>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[
+                    { id: 'after_tax', label: 'After-tax proceeds' },
+                    { id: 'effective_rate', label: 'Effective rate' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setChartTab(tab.id)}
+                      style={{
+                        border: 'none', background: 'transparent', cursor: 'pointer',
+                        padding: '8px 14px', fontSize: 13, fontWeight: 600, fontFamily: FONT_BODY,
+                        color: chartTab === tab.id ? C.textPrimary : C.textMuted,
+                        borderBottom: chartTab === tab.id ? `2px solid ${C.teal}` : '2px solid transparent',
+                        marginBottom: -1,
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 6 }}>
+                  <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    X-axis
+                  </span>
+                  <Toggle
+                    value={inputs.axis_view}
+                    onChange={(v) => update({ axis_view: v })}
+                    options={[
+                      { value: 'holding_period', label: 'Holding period' },
+                      { value: 'sale_year', label: 'Sale year' },
+                    ]}
+                  />
+                </div>
               </div>
               <div style={{ fontSize: 11, color: C.teal, fontStyle: 'italic', marginBottom: 8 }}>
                 {chartTab === 'after_tax'
                   ? 'Best for showing the dollar impact of the regime change.'
                   : 'Best for understanding how the new rules tax real gains.'}
               </div>
-              <MainChart data={chartData} tab={chartTab} xLabel={mode === 'old_vs_new' ? 'Holding period (years)' : 'Sale year'} />
-              <DiffChart data={chartData} tab={chartTab} />
+              <MainChart
+                data={chartData}
+                tab={chartTab}
+                xLabel={inputs.axis_view === 'sale_year' ? 'Sale year' : 'Holding period (years)'}
+                focusX={focusX}
+              />
+
+              {/* Focus year slider */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 16,
+                marginTop: 10, padding: '8px 4px',
+                borderTop: `1px solid ${C.border}`,
+              }}>
+                <div style={{
+                  fontSize: 11, color: C.textMuted, fontWeight: 600,
+                  textTransform: 'uppercase', letterSpacing: 0.4, minWidth: 70,
+                }}>
+                  Focus
+                </div>
+                <input
+                  type="range"
+                  className="slider-track"
+                  min={HOLDING_MIN}
+                  max={HOLDING_MAX}
+                  step={1}
+                  value={inputs.focus_years}
+                  onChange={(e) => update({ focus_years: Number(e.target.value) })}
+                  style={{ flex: 1 }}
+                />
+                <div style={{ fontSize: 13, fontFamily: FONT_MONO, fontWeight: 600, color: C.teal, minWidth: 100, textAlign: 'right' }}>
+                  {inputs.focus_years}y · sale {new Date(focusScenario.sale_date).getFullYear()}
+                </div>
+              </div>
+
+              <DiffChart data={chartData} tab={chartTab} focusX={focusX} />
             </Card>
           )}
 
-          {/* Asset-type-specific footnote */}
-          {mode === 'specific' && (
-            <AssetTypeFootnote assetType={mode2.asset_type} />
-          )}
+          {showResults && <AssetTypeFootnote assetType={inputs.asset_type} />}
 
           <div style={{ fontSize: 11, color: C.textMuted, padding: '8px 4px', lineHeight: 1.5 }}>
             Illustrative model based on the May 2026 Budget announcement and industry analysis. Calculations are subject to final legislation.
@@ -1073,7 +1142,7 @@ export default function App() {
       </div>
 
       {paramsOpen && <ParamsModal onClose={() => setParamsOpen(false)} />}
-      {assumptionsOpen && !result.error && (
+      {assumptionsOpen && showResults && (
         <AssumptionsModal diagnostics={result.diagnostics || {}} onClose={() => setAssumptionsOpen(false)} />
       )}
     </>
@@ -1081,110 +1150,21 @@ export default function App() {
 }
 
 // ----------------------------------------------------------------------------
-// Asset type footnote — shown only for property/other in Mode 2
+// Unified input panel
 // ----------------------------------------------------------------------------
 
-function AssetTypeFootnote({ assetType }) {
-  if (assetType === 'shares' || assetType === 'crypto') return null;
-  const notes = {
-    property: 'Investment property: capital works deductions claimed (Div 43) reduce the cost base for CGT. New residential builds get a per-disposal election between old and new rules — both numbers are shown above; pick the lower at sale. Main residence exemption and stamp duty on a primary residence are not modelled.',
-    other: 'Other assets (collectibles, business assets, units in unit trusts) follow the same CGT mechanics shown here. Specific rules may apply — small business CGT concessions, personal-use asset exemptions, and trust pass-through aren\'t modelled.',
-  };
-  const text = notes[assetType];
-  if (!text) return null;
-  return (
-    <div style={{
-      padding: 12, background: C.offWhite, border: `1px solid ${C.border}`,
-      borderRadius: 8, fontSize: 11, color: C.textSecondary, lineHeight: 1.5,
-    }}>
-      {text}
-    </div>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Sub-components: inputs
-// ----------------------------------------------------------------------------
-
-const INCOME_SUPPORT_INFO = 'Affects the new-rules calculation only: removes the 30% minimum tax floor on the gain. Per the 2026 Budget, recipients of Centrelink income support (Age Pension, JobSeeker, Disability Support Pension, Parenting Payment, etc.) pay their marginal rate without the minimum top-up. This only changes the outcome when the marginal rate on the gain would otherwise be below 30% — for clients whose income places them at or above the 30% bracket, toggling Yes has no visible effect.';
-
-function Mode1Inputs({ inputs, update }) {
-  return (
-    <Card>
-      <CardHeader title="Scenario inputs" subtitle="Hypothetical asset under both regimes." />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div>
-          <Label>Purchase price</Label>
-          <NumberInput value={inputs.purchase_price} onChange={(v) => update({ purchase_price: v })} />
-        </div>
-        <div>
-          <Label>Annual nominal return</Label>
-          <Slider
-            value={inputs.return_rate * 100}
-            onChange={(v) => update({ return_rate: v / 100 })}
-            min={0} max={15} step={0.1}
-            format={(v) => `${v.toFixed(1)}%`}
-          />
-        </div>
-        <div>
-          <Label>Annual inflation</Label>
-          <Slider
-            value={inputs.inflation * 100}
-            onChange={(v) => update({ inflation: v / 100 })}
-            min={0} max={6} step={0.1}
-            format={(v) => `${v.toFixed(1)}%`}
-          />
-        </div>
-        <div>
-          <Label>Holding period</Label>
-          <Slider
-            value={inputs.holding_years}
-            onChange={(v) => update({ holding_years: v })}
-            min={1} max={30} step={1}
-            format={(v) => `${v} yr`}
-          />
-        </div>
-        <div>
-          <Label>Other taxable income at sale</Label>
-          <NumberInput value={inputs.other_income} onChange={(v) => update({ other_income: v })} />
-        </div>
-        <div>
-          <Label info={INCOME_SUPPORT_INFO} infoTitle="Centrelink income support">
-            Centrelink income support recipient
-          </Label>
-          <Toggle
-            value={inputs.income_support_recipient}
-            onChange={(v) => update({ income_support_recipient: v })}
-            options={[{ value: false, label: 'No' }, { value: true, label: 'Yes' }]}
-          />
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, setSalePriceOverridden, isPreCgt }) {
+function UnifiedInputs({ inputs, update, isPreCgt }) {
   const purchase = new Date(inputs.purchase_date);
-  const sale = new Date(inputs.sale_date);
-  const needsValuation = purchase < LEG.newRulesStart && sale >= LEG.newRulesStart;
-  const showValuationToggle = needsValuation && !isPreCgt;
-  // Pre-CGT always uses entered value; otherwise honour the user choice
-  const effectiveValuationMethod = isPreCgt ? 'use_entered_value' : inputs.valuation_method;
-  const showValue2027 =
-    needsValuation && (effectiveValuationMethod === 'use_entered_value' || isPreCgt);
+  // Valuation toggle relevant if non-pre-CGT and purchase straddles 1 Jul 2027
+  // for at least one chart point — i.e. purchase < cutoff (chart extends 16y+ forward).
+  const showValuationToggle = !isPreCgt && purchase < LEG.newRulesStart;
+  const showValue2027ManualInput = showValuationToggle && inputs.valuation_method === 'use_entered_value';
+  const isProperty = inputs.asset_type === 'property';
 
-  const assetTypeLabels = {
-    purchase_price:
-      inputs.asset_type === 'property' ? 'Purchase price' : 'Purchase price',
-    acquisition_costs:
-      inputs.asset_type === 'property'
-        ? 'Stamp duty + legal fees'
-        : 'Acquisition costs',
-    capital_improvements:
-      inputs.asset_type === 'property'
-        ? 'Capital improvements (renovations, extensions)'
-        : 'Capital improvements',
-  };
+  const acqLabel = isProperty ? 'Stamp duty + legal fees' : 'Acquisition costs';
+  const improvementsLabel = isProperty
+    ? 'Capital improvements (renovations, extensions)'
+    : 'Capital improvements';
 
   return (
     <>
@@ -1194,7 +1174,7 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
           <div>
             <Label>Asset type</Label>
             <Select
-              value={inputs.asset_type || 'shares'}
+              value={inputs.asset_type}
               onChange={(v) => update({ asset_type: v })}
               options={[
                 { value: 'shares', label: 'Shares / managed funds' },
@@ -1224,27 +1204,30 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
           {!isPreCgt && (
             <>
               <div>
-                <Label>{assetTypeLabels.purchase_price}</Label>
+                <Label>Purchase price</Label>
                 <NumberInput value={inputs.purchase_price} onChange={(v) => update({ purchase_price: v })} />
               </div>
-              <div>
-                <Label>{assetTypeLabels.acquisition_costs}</Label>
-                <NumberInput value={inputs.acquisition_costs} onChange={(v) => update({ acquisition_costs: v })} />
-              </div>
-              <div>
-                <Label>{assetTypeLabels.capital_improvements}</Label>
-                <NumberInput value={inputs.capital_improvements} onChange={(v) => update({ capital_improvements: v })} />
-              </div>
-              {inputs.asset_type === 'property' && (
-                <div>
-                  <Label
-                    info="Division 43 capital works deductions claimed over the holding period reduce the cost base for CGT purposes. If you've claimed $10,000 of building depreciation, enter $10,000 here. Don't include plant & equipment (Div 40) — that's separate and may not affect cost base if acquired after May 2017."
-                    infoTitle="Capital works deductions"
-                  >
-                    Capital works deductions claimed
-                  </Label>
-                  <NumberInput value={inputs.depreciation_claimed} onChange={(v) => update({ depreciation_claimed: v })} />
-                </div>
+              {isProperty && (
+                <>
+                  <div>
+                    <Label>{acqLabel}</Label>
+                    <NumberInput value={inputs.acquisition_costs} onChange={(v) => update({ acquisition_costs: v })} />
+                  </div>
+                  <div>
+                    <Label>{improvementsLabel}</Label>
+                    <NumberInput value={inputs.capital_improvements} onChange={(v) => update({ capital_improvements: v })} />
+                  </div>
+                  <div>
+                    <Label info={CAPITAL_WORKS_INFO} infoTitle="Capital works deductions">
+                      Capital works deductions claimed
+                    </Label>
+                    <NumberInput value={inputs.depreciation_claimed} onChange={(v) => update({ depreciation_claimed: v })} />
+                  </div>
+                  <div>
+                    <Label>Sale costs (agent, conveyancing)</Label>
+                    <NumberInput value={inputs.sale_costs} onChange={(v) => update({ sale_costs: v })} />
+                  </div>
+                </>
               )}
             </>
           )}
@@ -1252,17 +1235,13 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
       </Card>
 
       <Card>
-        <CardHeader title="Sale assumptions" />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <CardHeader title="Returns" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
-            <Label>Sale date</Label>
-            <DateInput value={inputs.sale_date} onChange={(v) => update({ sale_date: v })} />
-          </div>
-          <div>
-            <Label>Annual growth assumption</Label>
+            <Label>Annual return rate</Label>
             <Slider
-              value={inputs.growth_rate * 100}
-              onChange={(v) => update({ growth_rate: v / 100 })}
+              value={inputs.return_rate * 100}
+              onChange={(v) => update({ return_rate: v / 100 })}
               min={0} max={15} step={0.1}
               format={(v) => `${v.toFixed(1)}%`}
             />
@@ -1276,31 +1255,6 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
               format={(v) => `${v.toFixed(1)}%`}
             />
           </div>
-          <div>
-            <Label>Sale price {salePriceOverridden ? '(overridden)' : '(derived)'}</Label>
-            <NumberInput
-              value={salePriceOverridden ? inputs.sale_price : effectiveSalePrice}
-              onChange={(v) => {
-                setSalePriceOverridden(true);
-                update({ sale_price: v });
-              }}
-            />
-            {salePriceOverridden && (
-              <button
-                onClick={() => { setSalePriceOverridden(false); update({ sale_price: 0 }); }}
-                style={{
-                  marginTop: 4, background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: C.teal, fontSize: 11, padding: 0,
-                }}
-              >
-                Reset to derived
-              </button>
-            )}
-          </div>
-          <div>
-            <Label>Sale costs</Label>
-            <NumberInput value={inputs.sale_costs} onChange={(v) => update({ sale_costs: v })} />
-          </div>
         </div>
       </Card>
 
@@ -1308,7 +1262,7 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
         <CardHeader title="Tax position" />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
-            <Label>Other taxable income at sale year</Label>
+            <Label>Other taxable income (drives marginal rate)</Label>
             <NumberInput value={inputs.other_income} onChange={(v) => update({ other_income: v })} />
           </div>
           <div>
@@ -1323,10 +1277,7 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
           </div>
           {showValuationToggle && (
             <div>
-              <Label
-                info="For an asset bought before 1 July 2027 and sold after, the value at 1 July 2027 splits the gain into pre and post portions. ATO formula estimates this using compound growth from purchase to sale. Use 'Enter value' if you have a real market valuation at that date."
-                infoTitle="Valuation method"
-              >
+              <Label info={VALUATION_INFO} infoTitle="Valuation method">
                 Valuation at 1 July 2027
               </Label>
               <Toggle
@@ -1339,7 +1290,7 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
               />
             </div>
           )}
-          {showValue2027 && !isPreCgt && (
+          {showValue2027ManualInput && (
             <div>
               <Label>Value at 1 July 2027</Label>
               <NumberInput value={inputs.value_2027} onChange={(v) => update({ value_2027: v })} />
@@ -1352,10 +1303,32 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
 }
 
 // ----------------------------------------------------------------------------
+// Asset type footnote
+// ----------------------------------------------------------------------------
+
+function AssetTypeFootnote({ assetType }) {
+  if (assetType === 'shares' || assetType === 'crypto') return null;
+  const notes = {
+    property: 'Investment property: capital works deductions claimed (Div 43) reduce the cost base for CGT. New residential builds get a per-disposal election between old and new rules — both numbers are shown above; pick the lower at sale. Main residence exemption and stamp duty on a primary residence are not modelled.',
+    other: 'Other assets (collectibles, business assets, units in unit trusts) follow the same CGT mechanics shown here. Specific rules may apply — small business CGT concessions, personal-use asset exemptions, and trust pass-through aren\'t modelled.',
+  };
+  const text = notes[assetType];
+  if (!text) return null;
+  return (
+    <div style={{
+      padding: 12, background: C.offWhite, border: `1px solid ${C.border}`,
+      borderRadius: 8, fontSize: 11, color: C.textSecondary, lineHeight: 1.5,
+    }}>
+      {text}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
 // Summary cards
 // ----------------------------------------------------------------------------
 
-function SummaryCards({ mode, result, verdict }) {
+function SummaryCards({ result, verdict }) {
   const toneStyles = {
     good: { bg: C.healthyBg, fg: C.healthyText, border: C.healthy },
     bad: { bg: C.riskBg, fg: C.riskText, border: C.risk },
@@ -1364,20 +1337,11 @@ function SummaryCards({ mode, result, verdict }) {
   };
   const v = verdict ? toneStyles[verdict.tone] : toneStyles.neutral;
 
-  let card1, card2, diff, card1Label, card2Label;
-  if (mode === 'old_vs_new') {
-    card1Label = 'Tax under old rules';
-    card2Label = 'Tax under new rules';
-    card1 = result.oldRules.taxOnGain;
-    card2 = result.newRules.taxOnGain;
-    diff = card2 - card1;
-  } else {
-    card1Label = 'After-tax proceeds (actual)';
-    card2Label = 'After-tax (old rules counterfactual)';
-    card1 = result.actual?.afterTaxProceeds || result.newRules?.afterTaxProceeds || 0;
-    card2 = result.oldRules?.afterTaxProceeds || 0;
-    diff = card1 - card2;
-  }
+  const card1Label = 'After-tax proceeds (actual)';
+  const card2Label = 'After-tax (old rules counterfactual)';
+  const card1 = result.actual?.afterTaxProceeds || result.newRules?.afterTaxProceeds || 0;
+  const card2 = result.oldRules?.afterTaxProceeds || 0;
+  const diff = card1 - card2;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -1385,7 +1349,7 @@ function SummaryCards({ mode, result, verdict }) {
         <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
           {card1Label}
         </div>
-        <div style={{ fontFamily: FONT_HEAD, fontSize: 26, fontWeight: 700, color: mode === 'old_vs_new' ? C.oldRules : C.textPrimary }}>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 26, fontWeight: 700, color: C.textPrimary }}>
           {fmt(card1)}
         </div>
       </Card>
@@ -1393,17 +1357,17 @@ function SummaryCards({ mode, result, verdict }) {
         <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
           {card2Label}
         </div>
-        <div style={{ fontFamily: FONT_HEAD, fontSize: 26, fontWeight: 700, color: mode === 'old_vs_new' ? C.newRules : C.textPrimary }}>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 26, fontWeight: 700, color: C.textPrimary }}>
           {fmt(card2)}
         </div>
       </Card>
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
-          {mode === 'old_vs_new' ? 'Δ Tax' : 'Δ After-tax proceeds'}
+          Difference (after-tax proceeds)
         </div>
         <div style={{
           fontFamily: FONT_HEAD, fontSize: 26, fontWeight: 700,
-          color: (mode === 'old_vs_new' ? diff > 0 : diff < 0) ? C.risk : C.healthy,
+          color: diff < 0 ? C.risk : C.healthy,
         }}>
           {diff >= 0 ? '+' : ''}{fmt(diff)}
         </div>
@@ -1427,7 +1391,7 @@ function SummaryCards({ mode, result, verdict }) {
 // Charts
 // ----------------------------------------------------------------------------
 
-function MainChart({ data, tab, xLabel }) {
+function MainChart({ data, tab, xLabel, focusX }) {
   const isPct = tab === 'effective_rate';
   const keyOld = isPct ? 'oldRate' : 'old';
   const keyNew = isPct ? 'newRate' : 'new';
@@ -1456,7 +1420,8 @@ function MainChart({ data, tab, xLabel }) {
           <YAxis
             stroke={C.textSubtle}
             tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
-            domain={['dataMin', 'dataMax']}
+            domain={isPct ? [0, 50] : ['dataMin', 'dataMax']}
+            ticks={isPct ? [0, 10, 20, 30, 40, 50] : undefined}
             tickFormatter={isPct ? (v) => `${v.toFixed(0)}%` : fmtK}
             width={60}
           />
@@ -1464,53 +1429,44 @@ function MainChart({ data, tab, xLabel }) {
           <Legend verticalAlign="top" height={28} iconType="line" formatter={(value) => (
             <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>
           )} />
+          {/* 30% minimum tax reference line (effective rate only) */}
+          {isPct && (
+            <ReferenceLine
+              y={30}
+              stroke={C.textMuted}
+              strokeDasharray="4 4"
+              label={{
+                value: 'New rules minimum tax floor',
+                fontSize: 10,
+                fill: C.textMuted,
+                position: 'insideTopRight',
+              }}
+            />
+          )}
           <Line type="monotone" dataKey={keyOld} stroke={C.oldRules} strokeWidth={2} dot={false} name="Old rules" />
           <Line type="monotone" dataKey={keyNew} stroke={C.newRules} strokeWidth={2} dot={false} name="New rules" />
           {crossover != null && (
             <ReferenceLine x={crossover} stroke={C.textSubtle} strokeDasharray="4 4" label={{ value: 'crossover', fontSize: 10, fill: C.textMuted, position: 'top' }} />
           )}
+          {/* Focus reference line — find a matching xLabel so it lines up with discrete x-axis */}
+          {(() => {
+            const match = data.find((d) => d.x === focusX);
+            return match ? (
+              <ReferenceLine
+                x={match.xLabel}
+                stroke={C.teal}
+                strokeWidth={1.5}
+                label={{ value: 'focus', fontSize: 10, fill: C.teal, position: 'top' }}
+              />
+            ) : null;
+          })()}
         </LineChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-function DiffTooltip({ active, payload, label, isPct }) {
-  if (!active || !payload || !payload.length) return null;
-  // pos and neg are always paired; one is zero. The real diff = pos + neg.
-  const pos = payload.find((p) => p.dataKey === 'pos')?.value || 0;
-  const neg = payload.find((p) => p.dataKey === 'neg')?.value || 0;
-  const diff = pos + neg;
-  const epsilon = isPct ? 0.001 : 0.5;
-  let labelText, color;
-  if (diff < -epsilon) {
-    labelText = 'New worse';
-    color = C.risk;
-  } else if (diff > epsilon) {
-    labelText = 'New better';
-    color = C.healthy;
-  } else {
-    labelText = 'No difference';
-    color = C.textMuted;
-  }
-  const valueText = isPct
-    ? `${Math.abs(diff).toFixed(1)}%`
-    : fmt(Math.abs(diff));
-  return (
-    <div style={{
-      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
-      padding: 10, fontSize: 12, fontFamily: FONT_BODY, minWidth: 160,
-    }}>
-      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{label}</div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span style={{ color }}>{labelText}</span>
-        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color }}>{valueText}</span>
-      </div>
-    </div>
-  );
-}
-
-function DiffChart({ data, tab }) {
+function DiffChart({ data, tab, focusX }) {
   const isPct = tab === 'effective_rate';
   const points = data.map((d) => {
     const diff = isPct ? d.newRate - d.oldRate : d.new - d.old;
@@ -1521,6 +1477,7 @@ function DiffChart({ data, tab }) {
       neg: diff < 0 ? diff : 0,
     };
   });
+  const focusMatch = points.find((p) => p.x === focusX);
   return (
     <div style={{ width: '100%', height: 150, marginTop: 32 }}>
       <ResponsiveContainer>
@@ -1541,6 +1498,9 @@ function DiffChart({ data, tab }) {
           <Tooltip content={<DiffTooltip isPct={isPct} />} />
           <Area type="monotone" dataKey="pos" stroke={C.healthy} strokeWidth={1} fill={C.healthy} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New better" />
           <Area type="monotone" dataKey="neg" stroke={C.risk} strokeWidth={1} fill={C.risk} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New worse" />
+          {focusMatch && (
+            <ReferenceLine x={focusMatch.xLabel} stroke={C.teal} strokeWidth={1.5} />
+          )}
         </AreaChart>
       </ResponsiveContainer>
       <div style={{ fontSize: 10, color: C.textMuted, marginTop: -2, paddingLeft: 6 }}>
