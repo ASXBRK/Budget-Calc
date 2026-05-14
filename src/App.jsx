@@ -948,6 +948,14 @@ export default function App() {
           <div style={{ fontSize: 13, color: C.textSecondary, lineHeight: 1.6 }}>
             The May 2026 Federal Budget proposes replacing the 50% CGT discount with cost-base indexation plus a 30% minimum tax on real gains, for CGT events on or after 1 July 2027. This tool models the impact in two ways: <strong style={{ color: C.textPrimary }}>Old vs New rules</strong> compares the regimes for a hypothetical asset at any return, inflation, and holding period; <strong style={{ color: C.textPrimary }}>Specific asset</strong> projects a real client's holding using actual purchase and sale dates. Calculations follow the Budget paper plus published industry analysis (Treasury worked examples, Pitcher Partners, BDO, NAB); the reform is not yet legislated and treatment may change.
           </div>
+          <div style={{
+            fontSize: 12, color: C.textSecondary, lineHeight: 1.5,
+            borderLeft: `3px solid ${C.teal}`,
+            background: C.offWhite,
+            padding: '8px 12px', marginTop: 12,
+          }}>
+            <strong style={{ color: C.textPrimary }}>Scope:</strong> v1 models individual taxpayers only. SMSF, trust, and company treatment is planned for a future version.
+          </div>
         </Card>
       </div>
 
@@ -1098,7 +1106,7 @@ function AssetTypeFootnote({ assetType }) {
 // Sub-components: inputs
 // ----------------------------------------------------------------------------
 
-const INCOME_SUPPORT_INFO = 'Recipients of means-tested income support payments (Age Pension, JobSeeker, Disability Support Pension, Parenting Payment, etc.) are exempt from the 30% minimum tax on capital gains. They pay their marginal rate on the gain — without the minimum top-up. This protects lower-income retirees who realise large gains in years when their marginal rate would otherwise be below 30%.';
+const INCOME_SUPPORT_INFO = 'Affects the new-rules calculation only: removes the 30% minimum tax floor on the gain. Per the 2026 Budget, recipients of Centrelink income support (Age Pension, JobSeeker, Disability Support Pension, Parenting Payment, etc.) pay their marginal rate without the minimum top-up. This only changes the outcome when the marginal rate on the gain would otherwise be below 30% — for clients whose income places them at or above the 30% bracket, toggling Yes has no visible effect.';
 
 function Mode1Inputs({ inputs, update }) {
   return (
@@ -1141,8 +1149,8 @@ function Mode1Inputs({ inputs, update }) {
           <NumberInput value={inputs.other_income} onChange={(v) => update({ other_income: v })} />
         </div>
         <div>
-          <Label info={INCOME_SUPPORT_INFO} infoTitle="Income support recipient">
-            Income support recipient
+          <Label info={INCOME_SUPPORT_INFO} infoTitle="Centrelink income support">
+            Centrelink income support recipient
           </Label>
           <Toggle
             value={inputs.income_support_recipient}
@@ -1304,8 +1312,8 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
             <NumberInput value={inputs.other_income} onChange={(v) => update({ other_income: v })} />
           </div>
           <div>
-            <Label info={INCOME_SUPPORT_INFO} infoTitle="Income support recipient">
-              Income support recipient
+            <Label info={INCOME_SUPPORT_INFO} infoTitle="Centrelink income support">
+              Centrelink income support recipient
             </Label>
             <Toggle
               value={inputs.income_support_recipient}
