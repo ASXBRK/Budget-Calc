@@ -962,7 +962,7 @@ export default function App() {
       try { await document.fonts.ready; } catch {}
     }
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 800));
     setPdfState('capturing');
     try {
       const node = pdfRef.current;
@@ -1655,6 +1655,9 @@ function MainChart({ data, tab, xLabel, height = 420 }) {
           <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="xLabel"
+            type="category"
+            interval={0}
+            padding={{ left: 0, right: 0 }}
             stroke={C.textSubtle}
             tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
             label={{ value: xLabel, position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
@@ -1685,8 +1688,8 @@ function MainChart({ data, tab, xLabel, height = 420 }) {
               }}
             />
           )}
-          <Line type="monotone" dataKey={keyOld} stroke={C.oldRules} strokeWidth={2} dot={false} name="Old rules" />
-          <Line type="monotone" dataKey={keyNew} stroke={C.newRules} strokeWidth={2} dot={false} name="New rules" />
+          <Line type="monotone" dataKey={keyOld} stroke={C.oldRules} strokeWidth={2} dot={false} isAnimationActive={false} name="Old rules" />
+          <Line type="monotone" dataKey={keyNew} stroke={C.newRules} strokeWidth={2} dot={false} isAnimationActive={false} name="New rules" />
           {crossover != null && (
             <ReferenceLine x={crossover} stroke={C.textSubtle} strokeDasharray="4 4" label={{ value: 'crossover', fontSize: 10, fill: C.textMuted, position: 'top' }} />
           )}
@@ -1720,6 +1723,9 @@ function DiffChart({ data, tab, xLabel }) {
           <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="xLabel"
+            type="category"
+            interval={0}
+            padding={{ left: 0, right: 0 }}
             stroke={C.textSubtle}
             tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
             label={{ value: xLabel, position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
