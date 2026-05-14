@@ -44,7 +44,7 @@ const BUCKET_EXPLAINERS = {
   D: 'Pre-1985 asset. Gains accrued before 1 July 2027 remain exempt; only the portion accruing after that date is taxed under the new rules.',
 };
 
-const PRE_CGT_VALUE_INFO = "Pre-1985 assets are exempt up to 1 July 2027. From that date forwards, the new rules treat the 1 July 2027 market value as the cost base. A formal valuation isn't required for modelling — a reasonable estimate is fine, but flag it as illustrative when discussing with the client.";
+const PRE_CGT_VALUE_INFO = "Pre-1985 assets are exempt under existing CGT law. From 1 July 2027 the announced rules bring them into the CGT net; the standard transitional approach (and the assumption this tool makes) is a deemed market value cost base at 1 July 2027, so only gains accruing from that date are taxable. Treasury hasn't yet specified the cost base treatment, so flag this as illustrative when discussing with the client. A formal valuation isn't required for modelling — a reasonable estimate is fine.";
 
 const HIDE_SPINNERS = `
   input[type=number]::-webkit-inner-spin-button,
@@ -664,6 +664,10 @@ function AssumptionsModal({ diagnostics, onClose }) {
     {
       label: 'Medicare levy',
       text: 'Calculated using the proper shading-in formula for resident singles (nothing under $28,011, 10% phase-in to $35,014, then 2%). For clients well above the threshold this is effectively 2% × gain. For low-income clients it\'s correctly lower.',
+    },
+    {
+      label: 'Pre-1985 (pre-CGT) assets',
+      text: "Pre-CGT assets remain exempt under existing CGT law indefinitely (old-rules counterfactual = 0% across all years). The Budget announces these assets are brought into the new regime from 1 July 2027 onwards. Treasury hasn't yet specified the cost base treatment; this tool assumes a deemed market value reset at 1 July 2027, so only gains accruing from that date are taxable under indexation + 30% min. Final mechanics may differ.",
     },
     {
       label: 'Capital losses',
@@ -1463,6 +1467,41 @@ function MainChart({ data, tab, xLabel }) {
   );
 }
 
+function DiffTooltip({ active, payload, label, isPct }) {
+  if (!active || !payload || !payload.length) return null;
+  // pos and neg are always paired; one is zero. The real diff = pos + neg.
+  const pos = payload.find((p) => p.dataKey === 'pos')?.value || 0;
+  const neg = payload.find((p) => p.dataKey === 'neg')?.value || 0;
+  const diff = pos + neg;
+  const epsilon = isPct ? 0.001 : 0.5;
+  let labelText, color;
+  if (diff < -epsilon) {
+    labelText = 'New worse';
+    color = C.risk;
+  } else if (diff > epsilon) {
+    labelText = 'New better';
+    color = C.healthy;
+  } else {
+    labelText = 'No difference';
+    color = C.textMuted;
+  }
+  const valueText = isPct
+    ? `${Math.abs(diff).toFixed(1)}%`
+    : fmt(Math.abs(diff));
+  return (
+    <div style={{
+      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
+      padding: 10, fontSize: 12, fontFamily: FONT_BODY, minWidth: 160,
+    }}>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{label}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ color }}>{labelText}</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color }}>{valueText}</span>
+      </div>
+    </div>
+  );
+}
+
 function DiffChart({ data, tab }) {
   const isPct = tab === 'effective_rate';
   const points = data.map((d) => {
@@ -1475,7 +1514,7 @@ function DiffChart({ data, tab }) {
     };
   });
   return (
-    <div style={{ width: '100%', height: 150, marginTop: 6 }}>
+    <div style={{ width: '100%', height: 150, marginTop: 32 }}>
       <ResponsiveContainer>
         <AreaChart data={points} margin={{ top: 0, right: 16, bottom: 4, left: 4 }}>
           <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
@@ -1491,11 +1530,7 @@ function DiffChart({ data, tab }) {
             width={60}
           />
           <ReferenceLine y={0} stroke={C.textMuted} />
-          <Tooltip
-            formatter={(value) => isPct ? `${value.toFixed(1)}%` : fmt(value)}
-            labelStyle={{ fontSize: 11, color: C.textMuted }}
-            contentStyle={{ fontSize: 12, fontFamily: FONT_BODY, padding: 8, border: `1px solid ${C.border}`, borderRadius: 6 }}
-          />
+          <Tooltip content={<DiffTooltip isPct={isPct} />} />
           <Area type="monotone" dataKey="pos" stroke={C.healthy} strokeWidth={1} fill={C.healthy} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New better" />
           <Area type="monotone" dataKey="neg" stroke={C.risk} strokeWidth={1} fill={C.risk} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New worse" />
         </AreaChart>

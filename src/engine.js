@@ -363,6 +363,28 @@ function runSpecific(inputs) {
     ? Math.max(yearsBetween(purchaseDate, saleDate), 0)
     : 0;
 
+  // Pre-CGT asset sold before 1 July 2027 — exempt under existing law and
+  // the new rules haven't commenced. Zero tax under both regimes.
+  if (isPreCgt && saleDate < LEG.newRulesStart) {
+    return {
+      mode: 'specific',
+      bucket: 'A',
+      inputs,
+      salePrice: netSale,
+      costBase: 0,
+      nominalGain: 0,
+      holdingYears: totalYears,
+      purchaseDate,
+      saleDate,
+      oldRules: { taxableGain: 0, taxOnGain: 0, afterTaxProceeds: netSale, effectiveRate: 0 },
+      newRules: { taxableGain: 0, taxOnGain: 0, afterTaxProceeds: netSale, effectiveRate: 0, minTaxApplied: false },
+      split: null,
+      actual: { taxableGain: 0, taxOnGain: 0, afterTaxProceeds: netSale, effectiveRate: 0, minTaxApplied: false },
+      headline: `Selling this pre-1985 asset in ${saleDate.getFullYear()} is exempt under existing CGT law — no tax under either regime.`,
+      diagnostics: getDiagnostics({ preCgtExempt: true }),
+    };
+  }
+
   if (bucket === 'A') {
     return runBucketA({
       inputs,
