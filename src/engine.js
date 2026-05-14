@@ -697,9 +697,25 @@ function runBucketD(args) {
   } = args;
 
   if (value2027 == null || value2027 <= 0) {
-    throw new Error(
-      'Pre-CGT (Bucket D) requires user-entered market value at 1 July 2027'
-    );
+    // Soft state: tell the UI we need a valuation; don't throw.
+    return {
+      mode: 'specific',
+      bucket: 'D',
+      inputs,
+      salePrice,
+      costBase: 0,
+      nominalGain: salePrice,
+      holdingYears: 0,
+      purchaseDate,
+      saleDate,
+      oldRules: { taxableGain: 0, taxOnGain: 0, afterTaxProceeds: salePrice, effectiveRate: 0 },
+      newRules: { taxableGain: 0, taxOnGain: 0, afterTaxProceeds: salePrice, effectiveRate: 0, minTaxApplied: false },
+      split: null,
+      actual: { taxOnGain: 0, afterTaxProceeds: salePrice, taxableGain: 0, effectiveRate: 0, minTaxApplied: false },
+      result: 'awaiting_value_2027',
+      headline: '',
+      diagnostics: getDiagnostics({ awaitingValue2027: true }),
+    };
   }
 
   const yearsPost = Math.max(yearsBetween(LEG.newRulesStart, saleDate), 0);

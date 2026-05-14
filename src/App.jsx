@@ -37,6 +37,15 @@ const FONT_BODY = "'Plus Jakarta Sans', system-ui, sans-serif";
 const FONT_HEAD = "'DM Sans', system-ui, sans-serif";
 const FONT_MONO = "'JetBrains Mono', ui-monospace, monospace";
 
+const BUCKET_EXPLAINERS = {
+  A: 'Both purchase and sale are before 1 July 2027, so the old 50% discount applies to the whole gain.',
+  B: 'Because you bought before 1 July 2027 and are selling after, the gain is split — the pre-2027 portion uses the old 50% discount, the post-2027 portion uses indexation + 30% min.',
+  C: 'Purchased after 1 July 2027, so the new rules — indexation + 30% min — apply to the whole gain.',
+  D: 'Pre-1985 asset. Gains accrued before 1 July 2027 remain exempt; only the portion accruing after that date is taxed under the new rules.',
+};
+
+const PRE_CGT_VALUE_INFO = "Pre-1985 assets are exempt up to 1 July 2027. From that date forwards, the new rules treat the 1 July 2027 market value as the cost base. A formal valuation isn't required for modelling — a reasonable estimate is fine, but flag it as illustrative when discussing with the client.";
+
 const HIDE_SPINNERS = `
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -180,9 +189,21 @@ function CardHeader({ title, subtitle, right }) {
 
 function InfoTooltip({ content, title }) {
   const [open, setOpen] = useState(false);
+  const [flipLeft, setFlipLeft] = useState(false);
+  const iconRef = useRef(null);
+  const TOOLTIP_WIDTH = 260;
+
+  useEffect(() => {
+    if (!open || !iconRef.current) return;
+    const rect = iconRef.current.getBoundingClientRect();
+    const roomRight = window.innerWidth - rect.left;
+    setFlipLeft(roomRight < TOOLTIP_WIDTH + 16);
+  }, [open]);
+
   return (
     <span style={{ position: 'relative', display: 'inline-flex' }}>
       <span
+        ref={iconRef}
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
         onClick={() => setOpen((o) => !o)}
@@ -198,12 +219,13 @@ function InfoTooltip({ content, title }) {
         <div
           role="tooltip"
           style={{
-            position: 'absolute', top: '100%', left: 0, marginTop: 6,
+            position: 'absolute', top: '100%', marginTop: 6,
+            ...(flipLeft ? { right: 0 } : { left: 0 }),
             background: C.dark, color: C.white,
             fontSize: 11, lineHeight: 1.5, fontWeight: 400,
             textTransform: 'none', letterSpacing: 0,
             padding: '10px 12px', borderRadius: 6,
-            width: 260, zIndex: 50,
+            width: TOOLTIP_WIDTH, zIndex: 50,
             boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
           }}
         >
@@ -466,8 +488,8 @@ function DateMarker({ pct, label, strong }) {
 
 function ChartTooltip({ active, payload, label, suffix }) {
   if (!active || !payload || !payload.length) return null;
-  const old = payload.find((p) => p.dataKey === 'old')?.value;
-  const nw = payload.find((p) => p.dataKey === 'new')?.value;
+  const old = payload.find((p) => p.dataKey === 'old' || p.dataKey === 'oldRate')?.value;
+  const nw = payload.find((p) => p.dataKey === 'new' || p.dataKey === 'newRate')?.value;
   const diff = (nw ?? 0) - (old ?? 0);
   const isPct = suffix === '%';
   return (
@@ -790,7 +812,8 @@ export default function App() {
   const chartData = useMemo(() => {
     if (result.error) return [];
     if (mode === 'old_vs_new') {
-      const series = runCGTSeries(mode1, 'holding_years', [1, 30]);
+      const maxYears = Math.max(1, mode1.holding_years || 1);
+      const series = runCGTSeries(mode1, 'holding_years', [1, maxYears]);
       return series.map((s, i) => ({
         x: i + 1,
         xLabel: `${i + 1}y`,
@@ -915,6 +938,15 @@ export default function App() {
         </button>
       </div>
 
+      {/* Intro */}
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '20px 20px 0' }}>
+        <Card>
+          <div style={{ fontSize: 13, color: C.textSecondary, lineHeight: 1.6 }}>
+            The May 2026 Federal Budget proposes replacing the 50% CGT discount with cost-base indexation plus a 30% minimum tax on real gains, for CGT events on or after 1 July 2027. This tool models the impact in two ways: <strong style={{ color: C.textPrimary }}>Old vs New rules</strong> compares the regimes for a hypothetical asset at any return, inflation, and holding period; <strong style={{ color: C.textPrimary }}>Specific asset</strong> projects a real client's holding using actual purchase and sale dates. Calculations follow the Budget paper plus published industry analysis (Treasury worked examples, Pitcher Partners, BDO, NAB); the reform is not yet legislated and treatment may change.
+          </div>
+        </Card>
+      </div>
+
       {/* Main layout */}
       <div style={{
         maxWidth: 1280, margin: '0 auto', padding: 20,
@@ -939,12 +971,20 @@ export default function App() {
         {/* Right column: results */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {mode === 'specific' && result.bucket && !result.error && (
-            <TimelineStrip
-              purchaseDate={mode2.purchase_date}
-              saleDate={mode2.sale_date}
-              isPreCgt={isPreCgt}
-              bucket={result.bucket}
-            />
+            <>
+              <TimelineStrip
+                purchaseDate={mode2.purchase_date}
+                saleDate={mode2.sale_date}
+                isPreCgt={isPreCgt}
+                bucket={result.bucket}
+              />
+              <div style={{
+                fontSize: 12, fontStyle: 'italic', color: C.textSecondary,
+                lineHeight: 1.5, padding: '0 4px', marginTop: -4,
+              }}>
+                {BUCKET_EXPLAINERS[result.bucket]}
+              </div>
+            </>
           )}
 
           {/* Headline sentence */}
@@ -952,14 +992,18 @@ export default function App() {
             fontFamily: FONT_HEAD, fontSize: 19, lineHeight: 1.4, fontStyle: 'italic',
             color: C.textPrimary, padding: '4px 0',
           }}>
-            {result.error ? `Error: ${result.error}` : (result.headline || '')}
+            {result.error
+              ? `Error: ${result.error}`
+              : result.result === 'awaiting_value_2027'
+                ? 'Enter a market value at 1 July 2027 in Asset details to model this pre-CGT asset.'
+                : (result.headline || '')}
           </div>
 
-          {!result.error && (
+          {!result.error && result.result !== 'awaiting_value_2027' && (
             <SummaryCards mode={mode} result={result} verdict={verdict} />
           )}
 
-          {!result.error && (
+          {!result.error && result.result !== 'awaiting_value_2027' && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button onClick={copySummary} style={pillButton(copied)}>
                 {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy summary'}
@@ -973,7 +1017,7 @@ export default function App() {
             </div>
           )}
 
-          {!result.error && chartData.length > 0 && (
+          {!result.error && result.result !== 'awaiting_value_2027' && chartData.length > 0 && (
             <Card>
               <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 12 }}>
                 {[
@@ -1011,7 +1055,7 @@ export default function App() {
           )}
 
           <div style={{ fontSize: 11, color: C.textMuted, padding: '8px 4px', lineHeight: 1.5 }}>
-            Australian resident individual only. SMSF (1/3 discount), trusts, foreign residents, capital losses, main residence exemption, small business CGT concessions, and ESS shares are out of scope. Subject to final legislation.
+            Illustrative model based on the May 2026 Budget announcement and industry analysis. Calculations are subject to final legislation.
           </div>
         </div>
       </div>
@@ -1153,10 +1197,18 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
             <DateInput value={inputs.purchase_date} onChange={(v) => update({ purchase_date: v })} />
             {isPreCgt && (
               <div style={{ fontSize: 10, color: C.preCgt, marginTop: 4, fontWeight: 600 }}>
-                Pre-CGT asset — 1 July 2027 market value required below.
+                Pre-CGT asset — enter the 1 July 2027 market value below.
               </div>
             )}
           </div>
+          {isPreCgt && (
+            <div>
+              <Label info={PRE_CGT_VALUE_INFO} infoTitle="Market value at 1 July 2027">
+                Market value at 1 July 2027 (estimate)
+              </Label>
+              <NumberInput value={inputs.value_2027} onChange={(v) => update({ value_2027: v })} />
+            </div>
+          )}
           {!isPreCgt && (
             <>
               <div>
@@ -1275,11 +1327,9 @@ function Mode2Inputs({ inputs, update, effectiveSalePrice, salePriceOverridden, 
               />
             </div>
           )}
-          {showValue2027 && (
+          {showValue2027 && !isPreCgt && (
             <div>
-              <Label>
-                {isPreCgt ? 'Market value at 1 July 2027' : 'Value at 1 July 2027'}
-              </Label>
+              <Label>Value at 1 July 2027</Label>
               <NumberInput value={inputs.value_2027} onChange={(v) => update({ value_2027: v })} />
             </div>
           )}
@@ -1381,7 +1431,7 @@ function MainChart({ data, tab, xLabel }) {
   }
 
   return (
-    <div style={{ width: '100%', height: 290 }}>
+    <div style={{ width: '100%', height: 420 }}>
       <ResponsiveContainer>
         <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 4 }}>
           <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
@@ -1425,7 +1475,7 @@ function DiffChart({ data, tab }) {
     };
   });
   return (
-    <div style={{ width: '100%', height: 110, marginTop: 6 }}>
+    <div style={{ width: '100%', height: 150, marginTop: 6 }}>
       <ResponsiveContainer>
         <AreaChart data={points} margin={{ top: 0, right: 16, bottom: 4, left: 4 }}>
           <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
