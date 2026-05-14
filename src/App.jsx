@@ -402,7 +402,7 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
         fontSize: 10, color: C.textMuted, fontFamily: FONT_MONO,
         marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5,
       }}>
-        Bucket {bucket} · {bucketDesc}
+        {bucketDesc}
       </div>
 
       <div style={{
@@ -633,20 +633,15 @@ function ParamsModal({ onClose }) {
 
 function BucketsDiagram() {
   const rows = [
-    { label: 'A', desc: 'Bought & sold before 1 Jul 2027', pre: 100, post: 0, preColor: C.teal },
-    { label: 'B', desc: 'Bought before, sold after', pre: 60, post: 40, preColor: C.teal },
-    { label: 'C', desc: 'Bought after 1 Jul 2027', pre: 0, post: 100, preColor: C.teal },
-    { label: 'D', desc: 'Pre-1985 asset, sold after', pre: 60, post: 40, preColor: C.preCgt },
+    { key: 'A', desc: 'Bought & sold before 1 Jul 2027', pre: 100, post: 0, preColor: C.teal },
+    { key: 'B', desc: 'Bought before, sold after', pre: 60, post: 40, preColor: C.teal },
+    { key: 'C', desc: 'Bought after 1 Jul 2027', pre: 0, post: 100, preColor: C.teal },
+    { key: 'D', desc: 'Pre-1985 asset, sold after', pre: 60, post: 40, preColor: C.preCgt },
   ];
   return (
     <div>
       {rows.map((r) => (
-        <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-          <div style={{
-            width: 18, height: 18, borderRadius: 4, background: C.dark, color: C.white,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 11, fontWeight: 700, fontFamily: FONT_MONO,
-          }}>{r.label}</div>
+        <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
           <div style={{ flex: 1, height: 20, position: 'relative', border: `1px solid ${C.border}`, borderRadius: 3, overflow: 'hidden' }}>
             {r.pre > 0 && (
               <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${r.pre}%`, background: r.preColor }} />
@@ -680,7 +675,7 @@ function AssumptionsModal({ diagnostics, onClose }) {
       text: 'Under the new rules, tax is the higher of (a) your marginal rate on the real gain, or (b) 30% × real gain. For people whose marginal rate is already above 30%, the minimum does nothing. For lower-income retirees, it raises the effective rate to 30%.',
     },
     {
-      label: 'Pre-2027 vs post-2027 tax allocation (Bucket B)',
+      label: 'Pre-2027 vs post-2027 tax allocation (split treatment)',
       text: 'Marginal tax across both portions is split pro-rata by their taxable amounts. Treasury hasn\'t yet specified stacking order. If they require strict sequential stacking, results could shift by a few percent in close cases.',
     },
     {
@@ -901,7 +896,7 @@ export default function App() {
     lines.push(`Asset type: ${inputs.asset_type}`);
     lines.push(`Purchase: ${fmt(inputs.purchase_price)} on ${fmtDate(inputs.purchase_date)}`);
     lines.push(`Sale: ${fmt(focusScenario.sale_price)} on ${fmtDate(focusScenario.sale_date)} (focus ${inputs.focus_years}y holding)`);
-    lines.push(`Bucket: ${r.bucket} (${LEG.buckets[r.bucket]?.split(' — ')[1] || ''})`);
+    lines.push(`Treatment: ${LEG.buckets[r.bucket]?.split(' — ')[1] || ''}`);
     if (r.split) {
       lines.push(`Pre-1 July 2027 gain (taxable): ${fmt(r.split.prePortionTaxable)}`);
       lines.push(`Post-1 July 2027 gain (taxable): ${fmt(r.split.postPortionTaxable)}`);
@@ -1377,7 +1372,7 @@ function MainChart({ data, tab, xLabel, focusX }) {
   return (
     <div style={{ width: '100%', height: 420 }}>
       <ResponsiveContainer>
-        <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 4 }}>
+        <LineChart data={data} margin={{ top: 8, right: 16, bottom: 56, left: 4 }}>
           <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="xLabel"
@@ -1449,7 +1444,7 @@ function DiffChart({ data, tab, focusX, xLabel }) {
   return (
     <div style={{ width: '100%', height: 320 }}>
       <ResponsiveContainer>
-        <AreaChart data={points} margin={{ top: 8, right: 16, bottom: 24, left: 4 }}>
+        <AreaChart data={points} margin={{ top: 8, right: 16, bottom: 56, left: 4 }}>
           <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="xLabel"
