@@ -44,6 +44,21 @@ const BUCKET_EXPLAINERS = {
   D: 'Pre-1985 asset. Gains accrued before 1 July 2027 remain exempt; only the portion accruing after that date is taxed under the new rules.',
 };
 
+const BUCKET_EXPLAINERS_INCOME_SUPPORT = {
+  A: 'Both purchase and sale are before 1 July 2027, so the old 50% discount applies to the whole gain.',
+  B: 'Because you bought before 1 July 2027 and are selling after, the gain is split — the pre-2027 portion uses the old 50% discount, the post-2027 portion uses indexation only. As a Centrelink income support recipient, the 30% minimum tax floor does not apply.',
+  C: 'Purchased after 1 July 2027, so the new rules apply to the whole gain. As a Centrelink income support recipient, the 30% minimum tax floor does not apply — only cost-base indexation, taxed at your marginal rate.',
+  D: 'Pre-1985 asset. Gains accrued before 1 July 2027 remain exempt; the post-2027 portion is taxed under indexation only because as a Centrelink income support recipient the 30% minimum tax floor does not apply.',
+};
+
+function explainerForScenario(bucket, isPreCgt, incomeSupport) {
+  if (isPreCgt && bucket === 'A') {
+    return 'Pre-1985 asset sold before 1 July 2027 — exempt under existing CGT law. No tax under either regime.';
+  }
+  const table = incomeSupport ? BUCKET_EXPLAINERS_INCOME_SUPPORT : BUCKET_EXPLAINERS;
+  return table[bucket] || '';
+}
+
 const PRE_CGT_VALUE_INFO = "Pre-1985 assets are exempt under existing CGT law. From 1 July 2027 the announced rules bring them into the CGT net; the standard transitional approach (and the assumption this tool makes) is a deemed market value cost base at 1 July 2027, so only gains accruing from that date are taxable. Treasury hasn't yet specified the cost base treatment, so flag this as illustrative when discussing with the client. A formal valuation isn't required for modelling — a reasonable estimate is fine.";
 
 const INCOME_SUPPORT_INFO = 'Affects the new-rules calculation only: removes the 30% minimum tax floor on the gain. Per the 2026 Budget, recipients of Centrelink income support (Age Pension, JobSeeker, Disability Support Pension, Parenting Payment, etc.) pay their marginal rate without the minimum top-up. This only changes the outcome when the marginal rate on the gain would otherwise be below 30% — for clients whose income places them at or above the 30% bracket, toggling Yes has no visible effect.';
@@ -371,31 +386,37 @@ function Toggle({ value, onChange, options, disabled }) {
 // Timeline strip
 // ----------------------------------------------------------------------------
 
-function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
+function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket, incomeSupport }) {
   const pdate = purchaseDate ? new Date(purchaseDate) : null;
   const sdate = saleDate ? new Date(saleDate) : null;
   if (!pdate || !sdate) return null;
 
   const isSplit = bucket === 'B' || bucket === 'D';
+  // Income-support recipients are exempt from the 30% minimum tax floor.
+  const newRulesLabel = incomeSupport ? 'Indexation' : 'Indexation + 30% min';
+  const newRulesLabelFromValue =
+    incomeSupport
+      ? 'Indexation from market value at 1 July 2027'
+      : 'Indexation + 30% min from market value at 1 July 2027';
 
   let leftLabel, leftColor, rightLabel, rightColor, singleLabel, singleColor;
   if (isSplit) {
     if (bucket === 'B') {
       leftLabel = '50% discount';
       leftColor = C.teal;
-      rightLabel = 'Indexation + 30% min';
+      rightLabel = newRulesLabel;
       rightColor = C.newRules;
     } else {
       leftLabel = 'Pre-CGT exempt';
       leftColor = C.preCgt;
-      rightLabel = 'Indexation + 30% min from market value at 1 July 2027';
+      rightLabel = newRulesLabelFromValue;
       rightColor = C.newRules;
     }
   } else if (bucket === 'A') {
     singleLabel = isPreCgt ? 'Pre-CGT exempt' : '50% discount';
     singleColor = isPreCgt ? C.preCgt : C.teal;
   } else {
-    singleLabel = 'Indexation + 30% min';
+    singleLabel = newRulesLabel;
     singleColor = C.newRules;
   }
 
@@ -472,11 +493,6 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
         </div>
       </div>
 
-      <div style={{
-        fontSize: 10, color: C.textMuted, fontStyle: 'italic', marginTop: 8,
-      }}>
-        Segments shown for clarity, not to scale.
-      </div>
     </Card>
   );
 }
@@ -1006,14 +1022,13 @@ export default function App() {
                 saleDate={focusScenario.sale_date}
                 isPreCgt={isPreCgt}
                 bucket={result.bucket}
+                incomeSupport={inputs.income_support_recipient}
               />
               <div style={{
                 fontSize: 12, fontStyle: 'italic', color: C.textSecondary,
                 lineHeight: 1.5, padding: '0 4px', marginTop: -4,
               }}>
-                {isPreCgt && result.bucket === 'A'
-                  ? 'Pre-1985 asset sold before 1 July 2027 — exempt under existing CGT law. No tax under either regime.'
-                  : BUCKET_EXPLAINERS[result.bucket]}
+                {explainerForScenario(result.bucket, isPreCgt, inputs.income_support_recipient)}
               </div>
             </>
           )}
