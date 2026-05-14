@@ -19,6 +19,16 @@ export const LEG = Object.freeze({
   superDiscountRate: 1 / 3,
   medicareLevy: 0.02,
 
+  // Medicare levy thresholds for resident individuals (singles, 2025-26).
+  // Below lower: no levy.
+  // Lower to upper: 10% of excess over lower (shading-in).
+  // Above upper: 2% of full taxable income.
+  // Family thresholds not modelled — recommend the differencing math
+  // produces sensible numbers for couples too.
+  medicareLowerSingle: 28011,
+  medicareUpperSingle: 35014,
+  medicareShadingRate: 0.10,
+
   // Industry-consensus assumptions — swap if legislation differs
   apportionmentMethod: 'compound_CAGR',
   indexationFrequency: 'annual',
@@ -95,15 +105,40 @@ function marginalOnGain(otherIncome, gain, fy) {
   return marginalTax(otherIncome + gain, fy) - marginalTax(otherIncome, fy);
 }
 
-export function determineBucket(purchaseDate, saleDate, isPreCgt) {
+// Medicare levy with proper shading-in.
+// Returns the levy that would be payable on a given taxable income.
+export function medicareLevy(taxableIncome) {
+  if (taxableIncome <= LEG.medicareLowerSingle) return 0;
+  if (taxableIncome <= LEG.medicareUpperSingle) {
+    return (taxableIncome - LEG.medicareLowerSingle) * LEG.medicareShadingRate;
+  }
+  return taxableIncome * LEG.medicareLevy;
+}
+
+// Medicare attributable to the additional taxable amount (gain).
+// Calculated by differencing: levy on (other + gain) minus levy on other alone.
+// This handles shading-in correctly — clients well above the threshold see
+// roughly 2% × gain, clients below see less.
+function medicareOnGain(otherIncome, taxableGain) {
+  if (taxableGain <= 0) return 0;
+  return medicareLevy(otherIncome + taxableGain) - medicareLevy(otherIncome);
+}
+
+export function determineBucket(purchaseDate, saleDate, isPreCgt = null) {
   const start = LEG.newRulesStart;
   const sale = toDate(saleDate);
-  if (isPreCgt) {
+  const purchase = purchaseDate ? toDate(purchaseDate) : null;
+
+  // Auto-detect pre-CGT from date if not explicitly set
+  const effectivePreCgt =
+    isPreCgt != null ? isPreCgt : purchase && purchase < LEG.preCgtCutoff;
+
+  if (effectivePreCgt) {
+    // Pre-CGT and sale before 2027: still exempt (treat as 'A' — no tax)
     return sale < start ? 'A' : 'D';
   }
-  const purchase = toDate(purchaseDate);
   if (sale < start) return 'A';
-  if (purchase >= start) return 'C';
+  if (purchase && purchase >= start) return 'C';
   return 'B';
 }
 
@@ -116,7 +151,7 @@ function applyOld({ nominalGain, holdingYears, otherIncome, fy }) {
   const taxableGain =
     holdingYears >= 1 ? nominalGain * LEG.oldDiscountRate : nominalGain;
   const mt = marginalOnGain(otherIncome, taxableGain, fy);
-  const medicare = taxableGain * LEG.medicareLevy;
+  const medicare = medicareOnGain(otherIncome, taxableGain);
   return { taxableGain, taxOnGain: mt + medicare };
 }
 
@@ -145,7 +180,7 @@ function applyNew({
   const mt = marginalOnGain(otherIncome, realGain, fy);
   const minTax = realGain * LEG.minimumTaxRate;
   const exclMedicare = incomeSupport ? mt : Math.max(mt, minTax);
-  const medicare = realGain * LEG.medicareLevy;
+  const medicare = medicareOnGain(otherIncome, realGain);
   const minTaxApplied = !incomeSupport && minTax > mt;
   return {
     taxableGain: realGain,
@@ -154,6 +189,24 @@ function applyNew({
     indexationFactor,
     minTaxApplied,
   };
+}
+
+// ---------- cost base assembly ----------
+
+// Build cost base from inputs, honoring asset type. For investment property,
+// capital works deductions claimed reduce the cost base per Division 43.
+function buildCostBase(inputs) {
+  const {
+    purchase_price = 0,
+    acquisition_costs = 0,
+    capital_improvements = 0,
+    depreciation_claimed = 0,
+    asset_type = 'shares',
+    is_pre_cgt = false,
+  } = inputs;
+  if (is_pre_cgt) return 0;
+  const dep = asset_type === 'property' ? (depreciation_claimed || 0) : 0;
+  return purchase_price + acquisition_costs + capital_improvements - dep;
 }
 
 // ---------- result builders ----------
@@ -177,7 +230,7 @@ function getDiagnostics(extras = {}) {
     indexationFrequency: LEG.indexationFrequency,
     minimumTaxApplication: LEG.minimumTaxApplication,
     stackingOrder: LEG.stackingOrder,
-    medicareLevyAssumption: 'flat_2pct_on_taxable_gain',
+    medicareLevyAssumption: 'shading_in_singles_2025_26',
     inflationAssumption: 'user_specified',
     capitalLossesHandled: false,
     costBaseElementsIndexed: 'all',
@@ -282,28 +335,29 @@ function runSpecific(inputs) {
   const {
     purchase_date,
     sale_date,
-    purchase_price = 0,
-    acquisition_costs = 0,
-    capital_improvements = 0,
     sale_price,
     sale_costs = 0,
     inflation = 0,
     other_income,
     income_support_recipient = false,
-    is_pre_cgt = false,
     valuation_method = 'ATO_formula',
     value_2027: userValue2027,
   } = inputs;
 
   const purchaseDate = purchase_date ? toDate(purchase_date) : null;
   const saleDate = toDate(sale_date);
-  const costBase = is_pre_cgt
-    ? 0
-    : purchase_price + acquisition_costs + capital_improvements;
+
+  // Auto-detect pre-CGT from purchase date if not explicitly set
+  const isPreCgt =
+    inputs.is_pre_cgt != null
+      ? inputs.is_pre_cgt
+      : purchaseDate && purchaseDate < LEG.preCgtCutoff;
+
+  const costBase = isPreCgt ? 0 : buildCostBase(inputs);
   // Net sale proceeds (after sale costs) feed the gain calculation
   const netSale = sale_price - sale_costs;
   const fy = fyForDate(saleDate);
-  const bucket = determineBucket(purchaseDate, saleDate, is_pre_cgt);
+  const bucket = determineBucket(purchaseDate, saleDate, isPreCgt);
 
   const totalYears = purchaseDate
     ? Math.max(yearsBetween(purchaseDate, saleDate), 0)
@@ -350,6 +404,7 @@ function runSpecific(inputs) {
       otherIncome: other_income,
       incomeSupport: income_support_recipient,
       fy,
+      purchaseDate,
     });
   }
   // bucket B
@@ -515,7 +570,7 @@ function runBucketB(args) {
   const yearsPost = Math.max(totalYears - yearsToCutoff, 0);
 
   let value2027;
-  if (valuationMethod === 'use_entered_value' && userValue2027 != null) {
+  if (valuationMethod === 'use_entered_value' && userValue2027 != null && userValue2027 > 0) {
     value2027 = userValue2027;
   } else {
     // compound CAGR over the whole hold
@@ -558,7 +613,7 @@ function runBucketB(args) {
       minTaxApplied = minTaxOnPost > mtPost;
     }
   }
-  const medicare = totalTaxable * LEG.medicareLevy;
+  const medicare = medicareOnGain(otherIncome, totalTaxable);
   const totalTax = taxPre + taxPost + medicare;
   const afterTax = salePrice - totalTax;
 
@@ -619,8 +674,8 @@ function runBucketB(args) {
       saleDate,
       afterTax,
       totalGain: nominalGain,
-      pre: prePortionTaxable,
-      post: postPortionTaxable,
+      preGain,
+      postGain: postPortionTaxable,
       diff,
       afterTaxOld: oldRules.afterTaxProceeds,
     }),
@@ -638,10 +693,13 @@ function runBucketD(args) {
     otherIncome,
     incomeSupport,
     fy,
+    purchaseDate,
   } = args;
 
-  if (value2027 == null) {
-    throw new Error('Pre-CGT (Bucket D) requires user-entered value_2027');
+  if (value2027 == null || value2027 <= 0) {
+    throw new Error(
+      'Pre-CGT (Bucket D) requires user-entered market value at 1 July 2027'
+    );
   }
 
   const yearsPost = Math.max(yearsBetween(LEG.newRulesStart, saleDate), 0);
@@ -659,7 +717,7 @@ function runBucketD(args) {
   // since the pre-2027 portion is exempt.
   const newRules = makeRegimeResult(salePrice, value2027, nw);
   // No meaningful old-rules counterfactual: pre-1985 assets were exempt under
-  // the old regime as well. Surface that with a zero-tax oldRules object.
+  // the old regime too. Show zero-tax to make that visible.
   const oldRules = {
     taxableGain: 0,
     taxOnGain: 0,
@@ -684,7 +742,7 @@ function runBucketD(args) {
     costBase: 0,
     nominalGain: salePrice,
     holdingYears: yearsPost,
-    purchaseDate: inputs.purchase_date ? toDate(inputs.purchase_date) : null,
+    purchaseDate,
     saleDate,
     oldRules,
     newRules,
@@ -699,7 +757,7 @@ function runBucketD(args) {
       indexedValue2027: nw.indexedCostBase,
       taxPre: 0,
       taxPost: nw.taxOnGain,
-      medicare: postGain * LEG.medicareLevy,
+      medicare: medicareOnGain(otherIncome, postGain),
       totalTaxable: postGain,
       totalTax: nw.taxOnGain,
       minTaxApplied: nw.minTaxApplied,
@@ -731,20 +789,20 @@ export function runCGTSeries(baseInputs, axisVar, range) {
   } else if (axisVar === 'sale_year') {
     for (let y = min; y <= max; y++) {
       const saleDate = new Date(`${y}-06-30T00:00:00+10:00`);
-      // Derive a sale price by compounding the user's growth assumption if no
-      // override is provided per-year.
       const purchaseDate = toDate(baseInputs.purchase_date);
       const years = Math.max(yearsBetween(purchaseDate, saleDate), 0);
       const growth = baseInputs.growth_rate ?? 0.06;
-      const baseCb =
-        (baseInputs.purchase_price || 0) +
-        (baseInputs.acquisition_costs || 0) +
-        (baseInputs.capital_improvements || 0);
+      const baseCb = buildCostBase(baseInputs);
       const derivedSalePrice =
         baseInputs.sale_price_derive === false
           ? baseInputs.sale_price
-          : (baseInputs.is_pre_cgt
-              ? (baseInputs.value_2027 || 0) * Math.pow(1 + growth, Math.max(years - Math.max(yearsBetween(purchaseDate || LEG.newRulesStart, LEG.newRulesStart), 0), 0))
+          : (baseInputs.is_pre_cgt ||
+            (purchaseDate && purchaseDate < LEG.preCgtCutoff)
+              ? (baseInputs.value_2027 || 0) *
+                Math.pow(
+                  1 + growth,
+                  Math.max(yearsBetween(LEG.newRulesStart, saleDate), 0)
+                )
               : baseCb * Math.pow(1 + growth, years));
       results.push(
         runCGTProjection({
@@ -770,14 +828,6 @@ function fmtAUD(v) {
 
 function fmtPct(v, dp = 1) {
   return `${(v * 100).toFixed(dp)}%`;
-}
-
-function fmtDate(d) {
-  return new Intl.DateTimeFormat('en-AU', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  }).format(toDate(d));
 }
 
 function buildHeadlineMode1({
@@ -819,10 +869,10 @@ function buildHeadlineBucketA({ saleDate, afterTax }) {
   return `Selling this asset in ${y} produces ${fmtAUD(afterTax)} after tax under the current 50% discount rules.`;
 }
 
-function buildHeadlineBucketB({ saleDate, afterTax, totalGain, pre, post, diff, afterTaxOld }) {
+function buildHeadlineBucketB({ saleDate, afterTax, totalGain, preGain, postGain, diff, afterTaxOld }) {
   const y = toDate(saleDate).getFullYear();
   const moreOrLess = diff >= 0 ? 'more' : 'less';
-  return `Selling in ${y} produces ${fmtAUD(afterTax)} after tax. Of the ${fmtAUD(totalGain)} gain, ${fmtAUD(pre * 2)} is taxed at the 50% discount and ${fmtAUD(post)} under indexation + 30% min. That's ${fmtAUD(Math.abs(diff))} ${moreOrLess} than the ${fmtAUD(afterTaxOld)} you'd receive if the old rules applied to the whole gain.`;
+  return `Selling in ${y} produces ${fmtAUD(afterTax)} after tax. Of the ${fmtAUD(totalGain)} gain, ${fmtAUD(preGain)} is taxed at the 50% discount and ${fmtAUD(postGain)} under indexation + 30% min. That's ${fmtAUD(Math.abs(diff))} ${moreOrLess} than the ${fmtAUD(afterTaxOld)} you'd receive if the old rules applied to the whole gain.`;
 }
 
 function buildHeadlineBucketC({ saleDate, afterTax, indexedCb, realGain, effectiveRate }) {
@@ -832,5 +882,5 @@ function buildHeadlineBucketC({ saleDate, afterTax, indexedCb, realGain, effecti
 
 function buildHeadlineBucketD({ saleDate, afterTax, postGain }) {
   const y = toDate(saleDate).getFullYear();
-  return `This pre-1985 asset's gains accrued before 1 July 2027 remain exempt. Selling in ${y} produces ${fmtAUD(afterTax)} after tax, calculated on the ${fmtAUD(postGain)} gain accruing from 1 July 2027 under indexation + 30% min.`;
+  return `Selling in ${y} produces ${fmtAUD(afterTax)} after tax. The ${fmtAUD(postGain)} gain accruing from 1 July 2027 is taxed under indexation + 30% min; gains before that date remain exempt.`;
 }

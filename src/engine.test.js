@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { runCGTProjection, marginalTax, fyForDate, determineBucket, LEG } from './engine.js';
+import { runCGTProjection, marginalTax, fyForDate, determineBucket, medicareLevy, LEG } from './engine.js';
 
-// Tolerances:
-//   "near(a, b, pct)" — |a-b| / |b| <= pct
-//   Spec aims for ±1% but some worked examples in the brief are illustrative
-//   sketches with internal inconsistencies (see Test 7 comments). We use a
-//   modest ±2% where the spec figures are clearly approximate.
 function near(a, b, pct = 0.01) {
   if (b === 0) return Math.abs(a) <= 1;
   return Math.abs(a - b) / Math.abs(b) <= pct;
@@ -18,16 +13,21 @@ describe('helpers', () => {
   });
 
   it('marginalTax matches 2027-28 brackets', () => {
-    // 100000 income: (100000-45000)*0.30 + (45000-18200)*0.14
-    //              = 16500 + 3752 = 20252
     expect(marginalTax(100000, '2027-28')).toBeCloseTo(20252, 0);
   });
 
-  it('determineBucket assigns A/B/C/D', () => {
-    expect(determineBucket('2020-01-01', '2025-01-01', false)).toBe('A');
-    expect(determineBucket('2020-01-01', '2030-01-01', false)).toBe('B');
-    expect(determineBucket('2028-01-01', '2032-01-01', false)).toBe('C');
-    expect(determineBucket('1980-01-01', '2030-01-01', true)).toBe('D');
+  it('determineBucket assigns A/B/C/D (auto-detects pre-CGT)', () => {
+    expect(determineBucket('2020-01-01', '2025-01-01')).toBe('A');
+    expect(determineBucket('2020-01-01', '2030-01-01')).toBe('B');
+    expect(determineBucket('2028-01-01', '2032-01-01')).toBe('C');
+    expect(determineBucket('1980-01-01', '2030-01-01')).toBe('D');
+  });
+
+  it('medicareLevy applies shading-in correctly', () => {
+    expect(medicareLevy(25000)).toBe(0);              // below lower threshold
+    expect(medicareLevy(28011)).toBe(0);              // at lower threshold
+    expect(medicareLevy(35014)).toBeCloseTo(700, -1); // top of shading zone
+    expect(medicareLevy(100000)).toBe(2000);          // 2% full rate
   });
 });
 
@@ -91,11 +91,11 @@ describe('Mode 2 — Specific asset', () => {
     });
     expect(r.bucket).toBe('C');
     expect(near(r.newRules.indexedCostBase, 113, 0.02)).toBe(true);
-    expect(near(r.newRules.taxableGain, 12, 0.2)).toBe(true); // small dollar amounts → wide pct
+    expect(near(r.newRules.taxableGain, 12, 0.2)).toBe(true);
     expect(near(r.oldRules.taxableGain, 12.5, 0.2)).toBe(true);
   });
 
-  it('Test 6 (Jack, 30% minimum bites)', () => {
+  it('Test 6 (Jack, 30% minimum bites — with proper Medicare)', () => {
     const r = runCGTProjection({
       mode: 'specific',
       purchase_date: '2027-08-01',
@@ -107,10 +107,11 @@ describe('Mode 2 — Specific asset', () => {
     });
     expect(r.bucket).toBe('C');
     expect(r.newRules.minTaxApplied).toBe(true);
-    // Spec expects 3000 = 30% × 10k (excludes Medicare); engine adds Medicare
-    // levy on top per Section 5.4. Allow either reading.
-    expect(r.newRules.taxOnGain).toBeGreaterThanOrEqual(2900);
-    expect(r.newRules.taxOnGain).toBeLessThanOrEqual(3300);
+    // 30% × $10k = $3,000 base. Other income $25k below Medicare lower
+    // threshold $28,011; gain pushes total to $35,000 which is within shading
+    // zone. Medicare ≈ ($35,000 - $28,011) × 10% = $698.90. Total ≈ $3,699.
+    expect(r.newRules.taxOnGain).toBeGreaterThanOrEqual(3500);
+    expect(r.newRules.taxOnGain).toBeLessThanOrEqual(3800);
   });
 
   it('Test 7 (Max, Bucket B Pitcher worked example)', () => {
@@ -125,18 +126,15 @@ describe('Mode 2 — Specific asset', () => {
       valuation_method: 'ATO_formula',
     });
     expect(r.bucket).toBe('B');
-    // Compound CAGR method per Section 5.5 / Pitcher: ~$16,985
     expect(near(r.split.value2027, 16985, 0.02)).toBe(true);
-    // Pre and post follow from the value_2027 — spec figures in the brief are
-    // a different (linear) methodology; we verify mechanics not those numbers.
     expect(r.split.prePortionTaxable).toBeGreaterThan(0);
     expect(r.split.postPortionTaxable).toBeGreaterThan(0);
   });
 
-  it('Test 8 (Pre-CGT, Bucket D)', () => {
+  it('Test 8 (Pre-CGT, Bucket D — auto-detected from date)', () => {
     const r = runCGTProjection({
       mode: 'specific',
-      is_pre_cgt: true,
+      // no is_pre_cgt flag — engine derives from 1980 purchase date
       purchase_date: '1980-01-01',
       sale_date: '2030-06-30',
       sale_price: 500000,
@@ -147,7 +145,6 @@ describe('Mode 2 — Specific asset', () => {
     });
     expect(r.bucket).toBe('D');
     expect(r.split.prePortionTaxable).toBe(0);
-    // Spec sketch values ~$431,500 / ~$68,500 vs engine ~$430,750 / ~$69,250
     expect(near(r.newRules.indexedCostBase, 431500, 0.02)).toBe(true);
     expect(near(r.newRules.taxableGain, 68500, 0.02)).toBe(true);
   });
@@ -180,7 +177,28 @@ describe('Edge cases', () => {
       income_support_recipient: true,
     });
     expect(r.newRules.minTaxApplied).toBe(false);
-    expect(r.newRules.taxOnGain).toBeLessThan(2000); // marginal only + medicare
+    // Marginal only + proper Medicare (low income, in shading zone)
+    expect(r.newRules.taxOnGain).toBeLessThan(2500);
+  });
+
+  it('investment property: capital works deductions reduce cost base', () => {
+    const baseInputs = {
+      mode: 'specific',
+      asset_type: 'property',
+      purchase_date: '2020-07-01',
+      purchase_price: 500000,
+      acquisition_costs: 20000,
+      capital_improvements: 0,
+      sale_date: '2025-06-30',
+      sale_price: 700000,
+      sale_costs: 5000,
+      inflation: 0.025,
+      other_income: 100000,
+    };
+    const withoutDep = runCGTProjection({ ...baseInputs, depreciation_claimed: 0 });
+    const withDep = runCGTProjection({ ...baseInputs, depreciation_claimed: 30000 });
+    // Higher cost base reduction → larger gain → more tax
+    expect(withDep.actual.taxOnGain).toBeGreaterThan(withoutDep.actual.taxOnGain);
   });
 
   it('LEG constants are frozen', () => {
