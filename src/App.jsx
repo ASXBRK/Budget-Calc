@@ -491,6 +491,12 @@ function ChartTooltip({ active, payload, label, suffix }) {
   const nw = payload.find((p) => p.dataKey === 'new' || p.dataKey === 'newRate')?.value;
   const diff = (nw ?? 0) - (old ?? 0);
   const isPct = suffix === '%';
+  // On the after-tax chart, higher new = taxpayer keeps more = GOOD (green).
+  // On the effective-rate chart, higher new = taxpayer pays more = BAD (red).
+  const epsilon = isPct ? 0.001 : 0.5;
+  const newIsBetter = isPct ? diff < -epsilon : diff > epsilon;
+  const newIsWorse = isPct ? diff > epsilon : diff < -epsilon;
+  const diffColor = newIsBetter ? C.healthy : newIsWorse ? C.risk : C.textMuted;
   return (
     <div style={{
       background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
@@ -511,7 +517,7 @@ function ChartTooltip({ active, payload, label, suffix }) {
       </div>
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between' }}>
         <span style={{ color: C.textMuted }}>Difference</span>
-        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color: diff > 0 ? C.risk : C.healthy }}>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color: diffColor }}>
           {isPct ? `${diff.toFixed(1)}%` : fmt(diff)}
         </span>
       </div>
@@ -525,13 +531,17 @@ function DiffTooltip({ active, payload, label, isPct }) {
   const neg = payload.find((p) => p.dataKey === 'neg')?.value || 0;
   const diff = pos + neg;
   const epsilon = isPct ? 0.001 : 0.5;
+  // After-tax: higher new = taxpayer keeps more = BETTER.
+  // Effective rate: higher new = taxpayer pays more = WORSE.
+  const newIsBetter = isPct ? diff < -epsilon : diff > epsilon;
+  const newIsWorse = isPct ? diff > epsilon : diff < -epsilon;
   let labelText, color;
-  if (diff < -epsilon) {
-    labelText = 'New worse';
-    color = C.risk;
-  } else if (diff > epsilon) {
+  if (newIsBetter) {
     labelText = 'New better';
     color = C.healthy;
+  } else if (newIsWorse) {
+    labelText = 'New worse';
+    color = C.risk;
   } else {
     labelText = 'Same';
     color = C.textMuted;
@@ -1081,8 +1091,8 @@ export default function App() {
               </div>
               <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>
                 {chartTab === 'after_tax'
-                  ? 'Δ after-tax proceeds across sale years. Above zero = new rules better.'
-                  : 'Δ effective rate across sale years. Above zero = new rules costlier.'}
+                  ? 'Difference in after-tax proceeds (new − old) across sale years. Above zero = new rules better; below zero = new rules costlier.'
+                  : 'Difference in effective rate (new − old) across sale years. Above zero = new rules costlier; below zero = new rules better.'}
               </div>
               <DiffChart data={chartData} tab={chartTab} xLabel="Sale year" />
             </Card>
@@ -1436,6 +1446,12 @@ function DiffChart({ data, tab, xLabel }) {
       neg: diff < 0 ? diff : 0,
     };
   });
+  // After-tax: positive diff = new keeps more = BETTER (green).
+  // Effective rate: positive diff = new pays more = WORSE (red).
+  const posColor = isPct ? C.risk : C.healthy;
+  const negColor = isPct ? C.healthy : C.risk;
+  const posName = isPct ? 'New worse' : 'New better';
+  const negName = isPct ? 'New better' : 'New worse';
   return (
     <div style={{ width: '100%', height: 320 }}>
       <ResponsiveContainer>
@@ -1455,8 +1471,8 @@ function DiffChart({ data, tab, xLabel }) {
           />
           <ReferenceLine y={0} stroke={C.textMuted} />
           <Tooltip content={<DiffTooltip isPct={isPct} />} />
-          <Area type="monotone" dataKey="pos" stroke={C.healthy} strokeWidth={1} fill={C.healthy} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New better" />
-          <Area type="monotone" dataKey="neg" stroke={C.risk} strokeWidth={1} fill={C.risk} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New worse" />
+          <Area type="monotone" dataKey="pos" stroke={posColor} strokeWidth={1} fill={posColor} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name={posName} />
+          <Area type="monotone" dataKey="neg" stroke={negColor} strokeWidth={1} fill={negColor} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name={negName} />
         </AreaChart>
       </ResponsiveContainer>
     </div>
