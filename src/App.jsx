@@ -372,29 +372,42 @@ function Toggle({ value, onChange, options, disabled }) {
 // ----------------------------------------------------------------------------
 
 function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
-  const start = new Date(LEG.newRulesStart);
   const pdate = purchaseDate ? new Date(purchaseDate) : null;
   const sdate = saleDate ? new Date(saleDate) : null;
   if (!pdate || !sdate) return null;
 
-  const buffer = 365 * 24 * 3600 * 1000;
-  const earliest = new Date(Math.min(pdate.getTime(), start.getTime() - buffer));
-  const latest = new Date(Math.max(sdate.getTime(), start.getTime() + buffer));
-  const span = latest - earliest;
-  const pct = (d) => Math.max(0, Math.min(100, ((d - earliest) / span) * 100));
+  const isSplit = bucket === 'B' || bucket === 'D';
 
-  const cutoffPct = pct(start);
-  const purchasePct = pct(pdate);
-  const salePct = pct(sdate);
-
-  const preColor = isPreCgt ? C.preCgt : C.teal;
-  const preLabel = isPreCgt ? 'Pre-CGT exempt' : '50% discount';
-  const postLabel = 'Indexation + 30% min';
-
-  const segStart = Math.max(purchasePct, 0);
-  const segEnd = Math.min(salePct, 100);
+  let leftLabel, leftColor, rightLabel, rightColor, singleLabel, singleColor;
+  if (isSplit) {
+    if (bucket === 'B') {
+      leftLabel = '50% discount';
+      leftColor = C.teal;
+      rightLabel = 'Indexation + 30% min';
+      rightColor = C.newRules;
+    } else {
+      leftLabel = 'Pre-CGT exempt';
+      leftColor = C.preCgt;
+      rightLabel = 'Indexation + 30% min from market value at 1 July 2027';
+      rightColor = C.newRules;
+    }
+  } else if (bucket === 'A') {
+    singleLabel = isPreCgt ? 'Pre-CGT exempt' : '50% discount';
+    singleColor = isPreCgt ? C.preCgt : C.teal;
+  } else {
+    singleLabel = 'Indexation + 30% min';
+    singleColor = C.newRules;
+  }
 
   const bucketDesc = LEG.buckets[bucket]?.split(' — ')[1] || '';
+
+  const segStyle = (color, radius) => ({
+    position: 'absolute', top: 0, bottom: 0,
+    background: color, borderRadius: radius,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color: C.white, fontSize: 11, fontWeight: 600, fontFamily: FONT_BODY,
+    overflow: 'hidden', padding: '0 8px', textAlign: 'center', lineHeight: 1.2,
+  });
 
   return (
     <Card style={{ padding: 16 }}>
@@ -405,69 +418,66 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket }) {
         {bucketDesc}
       </div>
 
+      {/* Boundary date label above the bar — split scenarios only */}
+      {isSplit && (
+        <div style={{ position: 'relative', height: 14, marginBottom: 2 }}>
+          <div style={{
+            position: 'absolute', left: '50%', transform: 'translateX(-50%)',
+            fontSize: 10, fontFamily: FONT_MONO, fontWeight: 600,
+            color: C.textPrimary, whiteSpace: 'nowrap',
+          }}>
+            1 Jul 2027 ↓
+          </div>
+        </div>
+      )}
+
+      {/* Bar */}
       <div style={{
-        position: 'relative', height: 40, background: C.offWhite,
+        position: 'relative', height: 44, background: C.offWhite,
         borderRadius: 4, border: `1px solid ${C.border}`,
       }}>
-        {bucket !== 'C' && segStart < cutoffPct && (
-          <div style={{
-            position: 'absolute', top: 0, bottom: 0,
-            left: `${segStart}%`,
-            width: `${Math.min(segEnd, cutoffPct) - segStart}%`,
-            background: preColor, borderRadius: '3px 0 0 3px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: C.white, fontSize: 11, fontWeight: 600, fontFamily: FONT_BODY,
-            overflow: 'hidden', whiteSpace: 'nowrap', padding: '0 8px',
-          }}>
-            {preLabel}
+        {isSplit ? (
+          <>
+            <div style={{ ...segStyle(leftColor, '3px 0 0 3px'), left: 0, width: '50%' }}>
+              {leftLabel}
+            </div>
+            <div style={{ ...segStyle(rightColor, '0 3px 3px 0'), left: '50%', width: '50%' }}>
+              {rightLabel}
+            </div>
+            <div style={{
+              position: 'absolute', top: -4, bottom: -4, left: '50%',
+              borderLeft: `1px dashed ${C.dark}`,
+            }} />
+          </>
+        ) : (
+          <div style={{ ...segStyle(singleColor, '3px'), left: 0, right: 0 }}>
+            {singleLabel}
           </div>
         )}
-        {bucket !== 'A' && segEnd > cutoffPct && (
-          <div style={{
-            position: 'absolute', top: 0, bottom: 0,
-            left: `${Math.max(segStart, cutoffPct)}%`,
-            width: `${segEnd - Math.max(segStart, cutoffPct)}%`,
-            background: C.newRules,
-            borderRadius: bucket === 'C' ? '3px' : '0 3px 3px 0',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: C.white, fontSize: 11, fontWeight: 600, fontFamily: FONT_BODY,
-            overflow: 'hidden', whiteSpace: 'nowrap', padding: '0 8px',
-          }}>
-            {postLabel}
-          </div>
-        )}
-        <div style={{
-          position: 'absolute', top: 0, bottom: 0,
-          left: `${cutoffPct}%`,
-          borderLeft: `1px dashed ${C.dark}`,
-        }} />
       </div>
 
-      <div style={{ position: 'relative', height: 18, marginTop: 6 }}>
-        <DateMarker pct={purchasePct} label={`Bought ${fmtDate(pdate)}`} />
-        <DateMarker pct={cutoffPct} label="1 Jul 2027" strong />
-        <DateMarker pct={salePct} label={`Sold ${fmtDate(sdate)}`} />
+      {/* End-date labels — anchored to bar edges */}
+      <div style={{ position: 'relative', height: 14, marginTop: 6 }}>
+        <div style={{
+          position: 'absolute', left: 0,
+          fontSize: 10, fontFamily: FONT_MONO, color: C.textSecondary, whiteSpace: 'nowrap',
+        }}>
+          Bought {fmtDate(pdate)}
+        </div>
+        <div style={{
+          position: 'absolute', right: 0,
+          fontSize: 10, fontFamily: FONT_MONO, color: C.textSecondary, whiteSpace: 'nowrap',
+        }}>
+          Sold {fmtDate(sdate)}
+        </div>
+      </div>
+
+      <div style={{
+        fontSize: 10, color: C.textMuted, fontStyle: 'italic', marginTop: 8,
+      }}>
+        Segments shown for clarity, not to scale.
       </div>
     </Card>
-  );
-}
-
-function DateMarker({ pct, label, strong }) {
-  const anchor =
-    pct < 8 ? 'flex-start' : pct > 92 ? 'flex-end' : 'center';
-  const transform =
-    anchor === 'center' ? 'translateX(-50%)' :
-    anchor === 'flex-start' ? 'none' : 'translateX(-100%)';
-  return (
-    <div style={{
-      position: 'absolute', left: `${pct}%`, transform,
-      fontSize: 10, fontFamily: FONT_MONO,
-      color: strong ? C.textPrimary : C.textSecondary,
-      fontWeight: strong ? 600 : 400,
-      whiteSpace: 'nowrap',
-    }}>
-      {label}
-    </div>
   );
 }
 
@@ -991,7 +1001,9 @@ export default function App() {
                 fontSize: 12, fontStyle: 'italic', color: C.textSecondary,
                 lineHeight: 1.5, padding: '0 4px', marginTop: -4,
               }}>
-                {BUCKET_EXPLAINERS[result.bucket]}
+                {isPreCgt && result.bucket === 'A'
+                  ? 'Pre-1985 asset sold before 1 July 2027 — exempt under existing CGT law. No tax under either regime.'
+                  : BUCKET_EXPLAINERS[result.bucket]}
               </div>
             </>
           )}
