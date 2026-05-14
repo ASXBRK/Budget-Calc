@@ -852,7 +852,7 @@ export default function App() {
     };
 
     const startYear = pd.getFullYear() + 1;
-    const endYear = startYear + SALE_YEAR_SPAN - 1;
+    const endYear = pd.getFullYear() + Math.max(1, Math.round(inputs.focus_years));
     for (let y = startYear; y <= endYear; y++) {
       const sale = new Date(`${y}-06-30T00:00:00+10:00`);
       const years = Math.max((sale - pd) / MS_PER_YEAR, 0);
@@ -861,12 +861,6 @@ export default function App() {
     }
     return points;
   }, [inputs, costBase, isPreCgt, result.error]);
-
-  // Where the focus reference line falls on the chart's x-axis (sale year)
-  const focusX = useMemo(() => {
-    const pd = new Date(inputs.purchase_date);
-    return pd.getFullYear() + Math.round(inputs.focus_years);
-  }, [inputs.purchase_date, inputs.focus_years]);
 
   const verdict = useMemo(() => {
     if (result.error) return null;
@@ -895,7 +889,7 @@ export default function App() {
     lines.push(`CGT Estimate — ${fmtDate(new Date())}`);
     lines.push(`Asset type: ${inputs.asset_type}`);
     lines.push(`Purchase: ${fmt(inputs.purchase_price)} on ${fmtDate(inputs.purchase_date)}`);
-    lines.push(`Sale: ${fmt(focusScenario.sale_price)} on ${fmtDate(focusScenario.sale_date)} (focus ${inputs.focus_years}y holding)`);
+    lines.push(`Sale: ${fmt(focusScenario.sale_price)} on ${fmtDate(focusScenario.sale_date)} (${inputs.focus_years}y holding)`);
     lines.push(`Treatment: ${LEG.buckets[r.bucket]?.split(' — ')[1] || ''}`);
     if (r.split) {
       lines.push(`Pre-1 July 2027 gain (taxable): ${fmt(r.split.prePortionTaxable)}`);
@@ -953,10 +947,13 @@ export default function App() {
         <Card style={{ padding: 22 }}>
           <div style={{ fontSize: 15, color: C.textSecondary, lineHeight: 1.7 }}>
             <p style={{ margin: 0 }}>
-              The May 2026 Federal Budget proposes replacing the 50% CGT discount with cost-base indexation plus a 30% minimum tax on real gains, for CGT events on or after 1 July 2027. This tool models the impact for a single asset across different holding periods or sale years. Calculations follow the Budget paper and published industry analysis.
+              The May 2026 Federal Budget proposes replacing the 50% CGT discount with cost-base indexation plus a 30% minimum tax on real gains, for CGT events on or after 1 July 2027. This tool models the impact for a single asset across different sale years. Calculations follow the Budget paper and published industry analysis.
             </p>
             <p style={{ margin: '12px 0 0' }}>
-              The reform is not yet legislated. The final law may differ from what is modelled here. This tool is for illustration and education only and is not financial, tax, or investment advice.
+              The announcement is a high-level policy outline, not draft legislation. The final law could differ materially from what is modelled here. Areas that remain unsettled include the mechanics of cost base indexation, the treatment of pre-CGT assets, how the 30% minimum tax floor interacts with capital losses, transitional rules for assets held across the 1 July 2027 commencement date, and the scope of the testamentary trust carve-out. Treasury consultation is expected through late 2026 and 2027, with draft legislation likely in 2027.
+            </p>
+            <p style={{ margin: '12px 0 0' }}>
+              This tool is for illustration and education only. It is not financial, tax, or investment advice and should not be relied upon for any decision about acquiring, holding, or disposing of an asset.
             </p>
           </div>
           <div style={{
@@ -1060,7 +1057,6 @@ export default function App() {
                 data={chartData}
                 tab={chartTab}
                 xLabel="Sale year"
-                focusX={focusX}
               />
 
               <div style={{ height: 48 }} />
@@ -1076,7 +1072,7 @@ export default function App() {
                   ? 'Δ after-tax proceeds across sale years. Above zero = new rules better.'
                   : 'Δ effective rate across sale years. Above zero = new rules costlier.'}
               </div>
-              <DiffChart data={chartData} tab={chartTab} focusX={focusX} xLabel="Sale year" />
+              <DiffChart data={chartData} tab={chartTab} xLabel="Sale year" />
             </Card>
           )}
 
@@ -1183,7 +1179,7 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
       </Card>
 
       <Card>
-        <CardHeader title="Sale year" subtitle="Picks the highlighted scenario on the chart." />
+        <CardHeader title="Sale year" subtitle="Sets the chart's right edge — chart scales to fit." />
         <div>
           <Label>Sale year</Label>
           <Slider
@@ -1354,7 +1350,7 @@ function SummaryCards({ result, verdict }) {
 // Charts
 // ----------------------------------------------------------------------------
 
-function MainChart({ data, tab, xLabel, focusX }) {
+function MainChart({ data, tab, xLabel }) {
   const isPct = tab === 'effective_rate';
   const keyOld = isPct ? 'oldRate' : 'old';
   const keyNew = isPct ? 'newRate' : 'new';
@@ -1411,25 +1407,13 @@ function MainChart({ data, tab, xLabel, focusX }) {
           {crossover != null && (
             <ReferenceLine x={crossover} stroke={C.textSubtle} strokeDasharray="4 4" label={{ value: 'crossover', fontSize: 10, fill: C.textMuted, position: 'top' }} />
           )}
-          {/* Focus reference line — find a matching xLabel so it lines up with discrete x-axis */}
-          {(() => {
-            const match = data.find((d) => d.x === focusX);
-            return match ? (
-              <ReferenceLine
-                x={match.xLabel}
-                stroke={C.teal}
-                strokeWidth={1.5}
-                label={{ value: 'focus', fontSize: 10, fill: C.teal, position: 'top' }}
-              />
-            ) : null;
-          })()}
         </LineChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-function DiffChart({ data, tab, focusX, xLabel }) {
+function DiffChart({ data, tab, xLabel }) {
   const isPct = tab === 'effective_rate';
   const points = data.map((d) => {
     const diff = isPct ? d.newRate - d.oldRate : d.new - d.old;
@@ -1440,7 +1424,6 @@ function DiffChart({ data, tab, focusX, xLabel }) {
       neg: diff < 0 ? diff : 0,
     };
   });
-  const focusMatch = points.find((p) => p.x === focusX);
   return (
     <div style={{ width: '100%', height: 320 }}>
       <ResponsiveContainer>
@@ -1462,9 +1445,6 @@ function DiffChart({ data, tab, focusX, xLabel }) {
           <Tooltip content={<DiffTooltip isPct={isPct} />} />
           <Area type="monotone" dataKey="pos" stroke={C.healthy} strokeWidth={1} fill={C.healthy} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New better" />
           <Area type="monotone" dataKey="neg" stroke={C.risk} strokeWidth={1} fill={C.risk} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="New worse" />
-          {focusMatch && (
-            <ReferenceLine x={focusMatch.xLabel} stroke={C.teal} strokeWidth={1.5} />
-          )}
         </AreaChart>
       </ResponsiveContainer>
     </div>
