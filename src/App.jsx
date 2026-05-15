@@ -881,10 +881,10 @@ export default function App() {
         return {
           x: xValue,
           xLabel,
-          old: r.oldRules?.afterTaxProceeds || 0,
-          new: r.actual?.afterTaxProceeds || r.newRules?.afterTaxProceeds || 0,
-          oldRate: (r.oldRules?.effectiveRate || 0) * 100,
-          newRate: (r.actual?.effectiveRate || r.newRules?.effectiveRate || 0) * 100,
+          old: r.oldRules?.afterTaxProceeds ?? 0,
+          new: r.actual?.afterTaxProceeds ?? 0,
+          oldRate: (r.oldRules?.effectiveRate ?? 0) * 100,
+          newRate: (r.actual?.effectiveRate ?? 0) * 100,
         };
       } catch {
         return null;
@@ -904,8 +904,8 @@ export default function App() {
 
   const verdict = useMemo(() => {
     if (result.error) return null;
-    const oldVal = result.oldRules?.afterTaxProceeds || 0;
-    const newVal = result.actual?.afterTaxProceeds || 0;
+    const oldVal = result.oldRules?.afterTaxProceeds ?? 0;
+    const newVal = result.actual?.afterTaxProceeds ?? 0;
     const diff = newVal - oldVal;
     const pct = oldVal > 0 ? Math.abs(diff) / oldVal : 0;
     if (result.bucket === 'A' && !isPreCgt) {
@@ -1406,8 +1406,8 @@ function PdfReport({ inputs, focusScenario, result, chartData, isPreCgt }) {
     other: 'Other',
   };
 
-  const oldAfter = result.oldRules?.afterTaxProceeds || 0;
-  const newAfter = result.actual?.afterTaxProceeds || result.newRules?.afterTaxProceeds || 0;
+  const oldAfter = result.oldRules?.afterTaxProceeds ?? 0;
+  const newAfter = result.actual?.afterTaxProceeds ?? 0;
   const diffAfter = newAfter - oldAfter;
   const saleDateStr = fmtDate(focusScenario.sale_date);
 
@@ -1590,8 +1590,8 @@ function SummaryCards({ result, verdict }) {
 
   const card1Label = 'After-tax proceeds (actual)';
   const card2Label = 'After-tax (old rules counterfactual)';
-  const card1 = result.actual?.afterTaxProceeds || result.newRules?.afterTaxProceeds || 0;
-  const card2 = result.oldRules?.afterTaxProceeds || 0;
+  const card1 = result.actual?.afterTaxProceeds ?? 0;
+  const card2 = result.oldRules?.afterTaxProceeds ?? 0;
   const diff = card1 - card2;
 
   return (
