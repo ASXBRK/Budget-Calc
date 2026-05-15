@@ -1155,6 +1155,15 @@ export default function App() {
                 xLabel="Sale year"
               />
 
+              {chartTab === 'effective_rate' && (
+                <div style={{
+                  fontSize: 11, color: C.textMuted, lineHeight: 1.5,
+                  padding: '8px 4px 0',
+                }}>
+                  The 30% minimum tax applies to the real (post-indexation) gain. The effective rate shown is tax as a percentage of <em>nominal</em> gain — it can fall below 30% when indexation reduces the taxable gain, or when split-treatment rules apply (gains accrued before 1 July 2027 are not subject to the floor).
+                </div>
+              )}
+
               <div style={{ height: 48 }} />
 
               <div style={{
@@ -1681,7 +1690,7 @@ function MainChart({ data, tab, xLabel, height = 420 }) {
               stroke={C.textMuted}
               strokeDasharray="4 4"
               label={{
-                value: 'New rules minimum tax floor',
+                value: '30% floor (on real gain, post-indexation)',
                 fontSize: 10,
                 fill: C.textMuted,
                 position: 'insideTopRight',
