@@ -10,6 +10,7 @@ import {
   ReferenceLine,
   Area,
   AreaChart,
+  ComposedChart,
   Legend,
 } from 'recharts';
 import { Copy, Link as LinkIcon, X, Settings, Info, Check, FileText } from 'lucide-react';
@@ -34,6 +35,11 @@ const C = {
   oldRules: '#0d9488',
   newRules: '#f59e0b',
   preCgt: '#10b981',
+  // Anatomy panel fills
+  anatomyCostBase: '#e5e7eb',      // light grey
+  anatomyUplift: '#99f6e4',        // light teal — distinct from oldRules teal
+  anatomyRealGain: '#fb923c',      // vivid orange — matches newRules family
+  anatomySalePrice: '#0f172a',     // dark slate for overlay line
 };
 
 const FONT_BODY = "'Plus Jakarta Sans', system-ui, sans-serif";
@@ -504,84 +510,6 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket, incomeSupport
 // Tooltips
 // ----------------------------------------------------------------------------
 
-function ChartTooltip({ active, payload, label, suffix }) {
-  if (!active || !payload || !payload.length) return null;
-  const old = payload.find((p) => p.dataKey === 'old' || p.dataKey === 'oldRate')?.value;
-  const nw = payload.find((p) => p.dataKey === 'new' || p.dataKey === 'newRate')?.value;
-  const diff = (nw ?? 0) - (old ?? 0);
-  const isPct = suffix === '%';
-  // On the after-tax chart, higher new = taxpayer keeps more = GOOD (green).
-  // On the effective-rate chart, higher new = taxpayer pays more = BAD (red).
-  const epsilon = isPct ? 0.001 : 0.5;
-  const newIsBetter = isPct ? diff < -epsilon : diff > epsilon;
-  const newIsWorse = isPct ? diff > epsilon : diff < -epsilon;
-  const diffColor = newIsBetter ? C.healthy : newIsWorse ? C.risk : C.textMuted;
-  return (
-    <div style={{
-      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
-      padding: 10, fontSize: 12, fontFamily: FONT_BODY, minWidth: 180,
-    }}>
-      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{label}</div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span style={{ color: C.oldRules }}>Old rules</span>
-        <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>
-          {isPct ? `${(old || 0).toFixed(1)}%` : fmt(old)}
-        </span>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span style={{ color: C.newRules }}>New rules</span>
-        <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>
-          {isPct ? `${(nw || 0).toFixed(1)}%` : fmt(nw)}
-        </span>
-      </div>
-      <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between' }}>
-        <span style={{ color: C.textMuted }}>Difference</span>
-        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color: diffColor }}>
-          {isPct ? `${diff.toFixed(1)}%` : fmt(diff)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function DiffTooltip({ active, payload, label, isPct }) {
-  if (!active || !payload || !payload.length) return null;
-  const pos = payload.find((p) => p.dataKey === 'pos')?.value || 0;
-  const neg = payload.find((p) => p.dataKey === 'neg')?.value || 0;
-  const diff = pos + neg;
-  const epsilon = isPct ? 0.001 : 0.5;
-  // After-tax: higher new = taxpayer keeps more = BETTER.
-  // Effective rate: higher new = taxpayer pays more = WORSE.
-  const newIsBetter = isPct ? diff < -epsilon : diff > epsilon;
-  const newIsWorse = isPct ? diff > epsilon : diff < -epsilon;
-  let labelText, color;
-  if (newIsBetter) {
-    labelText = 'New better';
-    color = C.healthy;
-  } else if (newIsWorse) {
-    labelText = 'New worse';
-    color = C.risk;
-  } else {
-    labelText = 'Same';
-    color = C.textMuted;
-  }
-  const valueText = isPct
-    ? `${Math.abs(diff).toFixed(1)}%`
-    : fmt(Math.abs(diff));
-  return (
-    <div style={{
-      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
-      padding: 10, fontSize: 12, fontFamily: FONT_BODY, minWidth: 160,
-    }}>
-      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{label}</div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span style={{ color }}>{labelText}</span>
-        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color }}>{valueText}</span>
-      </div>
-    </div>
-  );
-}
-
 // ----------------------------------------------------------------------------
 // Modals
 // ----------------------------------------------------------------------------
@@ -799,7 +727,6 @@ function derivedSalePrice({ inputs, isPreCgt, saleDate, costBase, yearsFromPurch
 
 export default function App() {
   const [inputs, setInputs] = useState(DEFAULT_INPUTS);
-  const [chartTab, setChartTab] = useState('after_tax');
   const [paramsOpen, setParamsOpen] = useState(false);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -885,6 +812,29 @@ export default function App() {
           sale_date: saleDate.toISOString().slice(0, 10),
           sale_price: Math.round(sp),
         });
+        // Anatomy fields — cost base, indexation uplift, real gain decompose
+        // the asset's value at this sale year under new-rules treatment.
+        const newStart = new Date(LEG.newRulesStart);
+        const yearsPost = Math.max((saleDate - newStart) / MS_PER_YEAR, 0);
+        const inflFactor = Math.pow(1 + (inputs.inflation || 0), yearsPost);
+        let cbForAnatomy;
+        if (isPreCgt) {
+          if (saleDate >= newStart) {
+            cbForAnatomy = inputs.value_2027 || 0;
+          } else {
+            // Pre-CGT pre-2027 sale is exempt under both regimes — show the
+            // whole asset value as cost base so anatomy reflects "no taxable
+            // gain", not a hypothetical 100% real-gain stack.
+            cbForAnatomy = Math.round(sp);
+          }
+        } else {
+          cbForAnatomy = costBase;
+        }
+        const indexedCb = cbForAnatomy * inflFactor;
+        const indexationUplift = Math.max(0, indexedCb - cbForAnatomy);
+        const realGain = Math.max(0, Math.round(sp) - indexedCb);
+        const taxOld = r.oldRules?.taxOnGain ?? 0;
+        const taxNew = r.actual?.taxOnGain ?? 0;
         return {
           x: xValue,
           xLabel,
@@ -892,6 +842,15 @@ export default function App() {
           new: r.actual?.afterTaxProceeds ?? 0,
           oldRate: (r.oldRules?.effectiveRate ?? 0) * 100,
           newRate: (r.actual?.effectiveRate ?? 0) * 100,
+          // Anatomy + tax lines
+          salePrice: Math.round(sp),
+          costBase: cbForAnatomy,
+          indexedCostBase: indexedCb,
+          indexationUplift,
+          realGain,
+          taxOld,
+          taxNew,
+          taxDiff: taxNew - taxOld,
         };
       } catch {
         return null;
@@ -1130,61 +1089,11 @@ export default function App() {
 
           {showResults && chartData.length > 0 && (
             <Card>
-              {/* Chart header: tabs only — x-axis is always sale year */}
-              <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 12 }}>
-                {[
-                  { id: 'after_tax', label: 'After-tax proceeds' },
-                  { id: 'effective_rate', label: 'Effective rate' },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setChartTab(tab.id)}
-                    style={{
-                      border: 'none', background: 'transparent', cursor: 'pointer',
-                      padding: '8px 14px', fontSize: 13, fontWeight: 600, fontFamily: FONT_BODY,
-                      color: chartTab === tab.id ? C.textPrimary : C.textMuted,
-                      borderBottom: chartTab === tab.id ? `2px solid ${C.teal}` : '2px solid transparent',
-                      marginBottom: -1,
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-              <div style={{ fontSize: 11, color: C.teal, fontStyle: 'italic', marginBottom: 8 }}>
-                {chartTab === 'after_tax'
-                  ? 'Best for showing the dollar impact of the regime change.'
-                  : 'Best for understanding how the new rules tax real gains.'}
-              </div>
-              <MainChart
-                data={chartData}
-                tab={chartTab}
-                xLabel="Sale year"
-              />
-
-              {chartTab === 'effective_rate' && (
-                <div style={{
-                  fontSize: 11, color: C.textMuted, lineHeight: 1.5,
-                  padding: '8px 4px 0',
-                }}>
-                  The 30% minimum tax applies to the real (post-indexation) gain. The effective rate shown is tax as a percentage of <em>nominal</em> gain — it can fall below 30% when indexation reduces the taxable gain, or when split-treatment rules apply (gains accrued before 1 July 2027 are not subject to the floor).
-                </div>
-              )}
-
-              <div style={{ height: 48 }} />
-
-              <div style={{
-                fontFamily: FONT_HEAD, fontSize: 14, fontWeight: 700,
-                color: C.textPrimary, marginBottom: 4,
-              }}>
-                Difference: New rules vs Old rules
-              </div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>
-                {chartTab === 'after_tax'
-                  ? 'Difference in after-tax proceeds (new − old) across sale years. Above zero = new rules better; below zero = new rules costlier.'
-                  : 'Difference in effective rate (new − old) across sale years. Above zero = new rules costlier; below zero = new rules better.'}
-              </div>
-              <DiffChart data={chartData} tab={chartTab} xLabel="Sale year" />
+              <AnatomyPanel data={chartData} height={340} />
+              <div style={{ height: 32 }} />
+              <DiffPanel data={chartData} height={200} />
+              <div style={{ height: 32 }} />
+              <RatePanel data={chartData} height={220} />
             </Card>
           )}
 
@@ -1519,20 +1428,15 @@ function PdfReport({ inputs, focusScenario, result, chartData, isPreCgt }) {
         </div>
       </div>
 
-      {/* Effective rate chart */}
-      <div style={{ marginTop: 10 }}>
-        <div style={pdfSectionTitle}>Effective rate</div>
-        <div style={{ width: 700 }}>
-          <MainChart data={chartData} tab="effective_rate" xLabel="Sale year" height={220} />
-        </div>
+      {/* Three-panel stack — PDF heights compressed to fit one A4 page */}
+      <div style={{ marginTop: 10, width: 700 }}>
+        <AnatomyPanel data={chartData} height={170} />
       </div>
-
-      {/* After-tax proceeds chart */}
-      <div style={{ marginTop: 8 }}>
-        <div style={pdfSectionTitle}>After-tax proceeds</div>
-        <div style={{ width: 700 }}>
-          <MainChart data={chartData} tab="after_tax" xLabel="Sale year" height={220} />
-        </div>
+      <div style={{ marginTop: 6, width: 700 }}>
+        <DiffPanel data={chartData} height={120} />
+      </div>
+      <div style={{ marginTop: 6, width: 700 }}>
+        <RatePanel data={chartData} height={140} />
       </div>
 
       {/* Treatment bar */}
@@ -1783,118 +1687,288 @@ function SummaryCards({ result, verdict }) {
 }
 
 // ----------------------------------------------------------------------------
-// Charts
+// Three-panel chart stack — shared x-axis (sale year)
 // ----------------------------------------------------------------------------
 
-function MainChart({ data, tab, xLabel, height = 420 }) {
-  const isPct = tab === 'effective_rate';
-  const keyOld = isPct ? 'oldRate' : 'old';
-  const keyNew = isPct ? 'newRate' : 'new';
+// Returns the xLabel value to use for the 1 Jul 2027 reference line, or null
+// if the cutoff doesn't fall inside the visible range. Sale dates in chartData
+// are 30 June of each year, so the 2027 tick is the last pre-cutoff point.
+function cutoffXLabel(data) {
+  if (!data?.length) return null;
+  const years = data.map((d) => d.x);
+  const min = Math.min(...years);
+  const max = Math.max(...years);
+  if (2027 >= min && 2027 <= max) return 2027;
+  return null;
+}
 
-  let crossover = null;
-  for (let i = 1; i < data.length; i++) {
-    const a = data[i - 1][keyNew] - data[i - 1][keyOld];
-    const b = data[i][keyNew] - data[i][keyOld];
-    if (a * b < 0) {
-      crossover = data[i].x;
-      break;
-    }
-  }
+// Shared XAxis config so all three panels align column-by-column.
+const sharedXAxisProps = {
+  dataKey: 'xLabel',
+  type: 'category',
+  interval: 0,
+  padding: { left: 0, right: 0 },
+  stroke: C.textSubtle,
+  tick: { fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted },
+};
 
+function PanelHeader({ title, subtitle, right }) {
   return (
-    <div style={{ width: '100%', height }}>
-      <ResponsiveContainer>
-        <LineChart data={data} margin={{ top: 8, right: 16, bottom: 56, left: 4 }}>
-          <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
-          <XAxis
-            dataKey="xLabel"
-            type="category"
-            interval={0}
-            padding={{ left: 0, right: 0 }}
-            stroke={C.textSubtle}
-            tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
-            label={{ value: xLabel, position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
-          />
-          <YAxis
-            stroke={C.textSubtle}
-            tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
-            domain={isPct ? [0, 50] : ['dataMin', 'dataMax']}
-            ticks={isPct ? [0, 10, 20, 30, 40, 50] : undefined}
-            tickFormatter={isPct ? (v) => `${v.toFixed(0)}%` : fmtK}
-            width={60}
-          />
-          <Tooltip content={<ChartTooltip suffix={isPct ? '%' : '$'} />} />
-          <Legend verticalAlign="top" height={28} iconType="line" formatter={(value) => (
-            <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>
-          )} />
-          {/* 30% minimum tax reference line (effective rate only) */}
-          {isPct && (
-            <ReferenceLine
-              y={30}
-              stroke={C.textMuted}
-              strokeDasharray="4 4"
-              label={{
-                value: '30% floor (on real gain, post-indexation)',
-                fontSize: 10,
-                fill: C.textMuted,
-                position: 'insideTopRight',
-              }}
-            />
-          )}
-          <Line type="monotone" dataKey={keyOld} stroke={C.oldRules} strokeWidth={2} dot={false} isAnimationActive={false} name="Old rules" />
-          <Line type="monotone" dataKey={keyNew} stroke={C.newRules} strokeWidth={2} dot={false} isAnimationActive={false} name="New rules" />
-          {crossover != null && (
-            <ReferenceLine x={crossover} stroke={C.textSubtle} strokeDasharray="4 4" label={{ value: 'crossover', fontSize: 10, fill: C.textMuted, position: 'top' }} />
-          )}
-        </LineChart>
-      </ResponsiveContainer>
+    <div style={{
+      display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+      marginBottom: 4,
+    }}>
+      <div>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 13, fontWeight: 700, color: C.textPrimary }}>
+          {title}
+        </div>
+        {subtitle && (
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
+      {right}
     </div>
   );
 }
 
-function DiffChart({ data, tab, xLabel }) {
-  const isPct = tab === 'effective_rate';
-  const points = data.map((d) => {
-    const diff = isPct ? d.newRate - d.oldRate : d.new - d.old;
-    return {
-      x: d.x,
-      xLabel: d.xLabel,
-      pos: diff >= 0 ? diff : 0,
-      neg: diff < 0 ? diff : 0,
-    };
-  });
-  // After-tax: positive diff = new keeps more = BETTER (green).
-  // Effective rate: positive diff = new pays more = WORSE (red).
-  const posColor = isPct ? C.risk : C.healthy;
-  const negColor = isPct ? C.healthy : C.risk;
-  const posName = isPct ? 'New worse' : 'New better';
-  const negName = isPct ? 'New better' : 'New worse';
+function CutoffReference({ data, label = '1 Jul 2027' }) {
+  const cutoff = cutoffXLabel(data);
+  if (cutoff == null) return null;
   return (
-    <div style={{ width: '100%', height: 320 }}>
-      <ResponsiveContainer>
-        <AreaChart data={points} margin={{ top: 8, right: 16, bottom: 56, left: 4 }}>
-          <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
-          <XAxis
-            dataKey="xLabel"
-            type="category"
-            interval={0}
-            padding={{ left: 0, right: 0 }}
-            stroke={C.textSubtle}
-            tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
-            label={{ value: xLabel, position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
-          />
-          <YAxis
-            stroke={C.textSubtle}
-            tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
-            tickFormatter={isPct ? (v) => `${v.toFixed(0)}%` : fmtK}
-            width={60}
-          />
-          <ReferenceLine y={0} stroke={C.textMuted} />
-          <Tooltip content={<DiffTooltip isPct={isPct} />} />
-          <Area type="monotone" dataKey="pos" stroke={posColor} strokeWidth={1} fill={posColor} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name={posName} />
-          <Area type="monotone" dataKey="neg" stroke={negColor} strokeWidth={1} fill={negColor} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name={negName} />
-        </AreaChart>
-      </ResponsiveContainer>
+    <ReferenceLine
+      x={cutoff}
+      stroke={C.textMuted}
+      strokeDasharray="3 3"
+      label={{ value: label, fontSize: 10, fill: C.textMuted, position: 'top' }}
+    />
+  );
+}
+
+// ---------- Panel 1: New rules anatomy ----------
+
+function AnatomyTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  const row = (k, v, color) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+      <span style={{ color: color || C.textMuted }}>{k}</span>
+      <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>{v}</span>
+    </div>
+  );
+  return (
+    <div style={{
+      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
+      padding: 10, fontSize: 11, fontFamily: FONT_BODY, minWidth: 220,
+    }}>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>Sale year {label}</div>
+      {row('Sale price', fmt(d.salePrice), C.anatomySalePrice)}
+      {row('Cost base', fmt(d.costBase))}
+      {row('Indexation uplift', fmt(d.indexationUplift))}
+      {row('Real gain', fmt(d.realGain), C.anatomyRealGain)}
+      <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
+        {row('Tax (new rules)', `${fmt(d.taxNew)} · ${fmtPct(d.newRate / 100, 1)}`, C.newRules)}
+        {row('Tax (old rules)', `${fmt(d.taxOld)} · ${fmtPct(d.oldRate / 100, 1)}`, C.oldRules)}
+      </div>
+    </div>
+  );
+}
+
+function AnatomyPanel({ data, height = 340 }) {
+  const [showOverlay, setShowOverlay] = useState(false);
+  const opacity = showOverlay ? 0.25 : 0.75;
+
+  return (
+    <div>
+      <PanelHeader
+        title="New rules anatomy"
+        subtitle="Sale price = cost base + indexation uplift + real gain. Real gain is what new rules tax."
+        right={
+          <button
+            onClick={() => setShowOverlay((v) => !v)}
+            style={{
+              ...pillButton(showOverlay),
+              padding: '4px 10px', fontSize: 11,
+            }}
+          >
+            {showOverlay ? 'Hide tax overlay' : 'Show old rules overlay'}
+          </button>
+        }
+      />
+      <div style={{ width: '100%', height }}>
+        <ResponsiveContainer>
+          <ComposedChart data={data} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
+            <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              {...sharedXAxisProps}
+              label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
+            />
+            <YAxis
+              stroke={C.textSubtle}
+              tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
+              tickFormatter={fmtK}
+              width={60}
+            />
+            <Tooltip content={<AnatomyTooltip />} />
+            <Legend
+              verticalAlign="top"
+              height={26}
+              iconType="square"
+              formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
+            />
+            <CutoffReference data={data} label="New rules commence" />
+            <Area type="monotone" dataKey="costBase" stackId="anatomy" stroke="none" fill={C.anatomyCostBase} fillOpacity={opacity} isAnimationActive={false} name="Cost base" />
+            <Area type="monotone" dataKey="indexationUplift" stackId="anatomy" stroke="none" fill={C.anatomyUplift} fillOpacity={opacity} isAnimationActive={false} name="Indexation uplift" />
+            <Area type="monotone" dataKey="realGain" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={opacity} isAnimationActive={false} name="Real gain" />
+            <Line type="monotone" dataKey="salePrice" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Sale price" />
+            {showOverlay && (
+              <Line type="monotone" dataKey="taxNew" stroke={C.newRules} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} name="Tax owed (new rules)" />
+            )}
+            {showOverlay && (
+              <Line type="monotone" dataKey="taxOld" stroke={C.oldRules} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} name="Tax owed (old rules)" />
+            )}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Panel 2: Tax difference ----------
+
+function TaxDiffTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  const diff = d.taxDiff || 0;
+  const epsilon = 0.5;
+  let labelText, color;
+  if (diff > epsilon) { labelText = 'New rules costs more'; color = C.risk; }
+  else if (diff < -epsilon) { labelText = 'New rules costs less'; color = C.healthy; }
+  else { labelText = 'Same'; color = C.textMuted; }
+  return (
+    <div style={{
+      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
+      padding: 10, fontSize: 11, fontFamily: FONT_BODY, minWidth: 200,
+    }}>
+      <div style={{ color: C.textMuted, marginBottom: 6 }}>Sale year {label}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ color: C.oldRules }}>Tax (old)</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>{fmt(d.taxOld)}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ color: C.newRules }}>Tax (new)</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>{fmt(d.taxNew)}</span>
+      </div>
+      <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+        <span style={{ color }}>{labelText}</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600, color }}>{fmt(Math.abs(diff))}</span>
+      </div>
+    </div>
+  );
+}
+
+function DiffPanel({ data, height = 200 }) {
+  // Split into pos (new costs more, red) and neg (new costs less, green) for fill.
+  const points = data.map((d) => ({
+    x: d.x,
+    xLabel: d.xLabel,
+    pos: d.taxDiff > 0 ? d.taxDiff : 0,
+    neg: d.taxDiff < 0 ? d.taxDiff : 0,
+    taxDiff: d.taxDiff,
+    taxOld: d.taxOld,
+    taxNew: d.taxNew,
+  }));
+  return (
+    <div>
+      <PanelHeader
+        title="Tax difference"
+        subtitle="Tax under new rules minus tax under old rules. Above zero = new rules costs more; below zero = new rules costs less."
+      />
+      <div style={{ width: '100%', height }}>
+        <ResponsiveContainer>
+          <AreaChart data={points} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
+            <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              {...sharedXAxisProps}
+              label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
+            />
+            <YAxis
+              stroke={C.textSubtle}
+              tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
+              tickFormatter={fmtK}
+              width={60}
+            />
+            <ReferenceLine y={0} stroke={C.textMuted} />
+            <CutoffReference data={data} />
+            <Tooltip content={<TaxDiffTooltip />} />
+            <Area type="monotone" dataKey="pos" stroke={C.risk} strokeWidth={1} fill={C.risk} fillOpacity={0.35} isAnimationActive={false} activeDot={false} name="New costs more" />
+            <Area type="monotone" dataKey="neg" stroke={C.healthy} strokeWidth={1} fill={C.healthy} fillOpacity={0.35} isAnimationActive={false} activeDot={false} name="New costs less" />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Panel 3: Effective rate ----------
+
+function RateTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  return (
+    <div style={{
+      background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
+      padding: 10, fontSize: 11, fontFamily: FONT_BODY, minWidth: 180,
+    }}>
+      <div style={{ color: C.textMuted, marginBottom: 6 }}>Sale year {label}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ color: C.oldRules }}>Old rules</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>{(d.oldRate || 0).toFixed(1)}%</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ color: C.newRules }}>New rules</span>
+        <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>{(d.newRate || 0).toFixed(1)}%</span>
+      </div>
+    </div>
+  );
+}
+
+function RatePanel({ data, height = 220 }) {
+  return (
+    <div>
+      <PanelHeader
+        title="Effective rate comparison"
+        subtitle="Tax as a percentage of nominal gain. Y-axis fixed 0–50%."
+      />
+      <div style={{ width: '100%', height }}>
+        <ResponsiveContainer>
+          <LineChart data={data} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
+            <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              {...sharedXAxisProps}
+              label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
+            />
+            <YAxis
+              stroke={C.textSubtle}
+              tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
+              domain={[0, 50]}
+              ticks={[0, 10, 20, 30, 40, 50]}
+              tickFormatter={(v) => `${v.toFixed(0)}%`}
+              width={60}
+            />
+            <Tooltip content={<RateTooltip />} />
+            <Legend verticalAlign="top" height={26} iconType="line"
+              formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>} />
+            <CutoffReference data={data} />
+            <Line type="monotone" dataKey="oldRate" stroke={C.oldRules} strokeWidth={2} dot={false} isAnimationActive={false} name="Old rules" />
+            <Line type="monotone" dataKey="newRate" stroke={C.newRules} strokeWidth={2} dot={false} isAnimationActive={false} name="New rules" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
