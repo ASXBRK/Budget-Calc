@@ -38,7 +38,8 @@ const C = {
   // Anatomy panel fills
   anatomyCostBase: '#F1F5F9',      // slate-100 — soft grey
   anatomyUplift: '#CCFBF1',        // teal-100 — ties to new rules
-  anatomyRealGain: '#FEF3C7',      // amber-100 — soft yellow, neutral (a gain isn't bad)
+  anatomyRealGain: '#FEF3C7',      // amber-100 — "kept after tax" portion of real gain
+  anatomyRealGainTax: '#FECDD3',   // rose-200  — "tax under new rules" portion of real gain
   anatomySalePrice: '#0F172A',     // slate-900 — strong overlay line
   // Semantic shading reserved for "new is better / worse" comparisons in
   // Panels 2 and 3 only.
@@ -853,6 +854,25 @@ export default function App() {
         const taxOld = r.oldRules?.taxOnGain ?? 0;
         const taxNew = r.actual?.taxOnGain ?? 0;
         const oldRulesTaxable = r.oldRules?.taxableGain ?? 0;
+        // Split the real gain layer into "kept" + "tax under new rules" so
+        // the user can see how much of the real gain is actually paid as
+        // tax. Only meaningful post-commencement; pre-2027 the whole real
+        // gain renders as a single yellow layer (tax sub-layer = 0).
+        const saleDatePost = saleDate >= newStart;
+        let taxOnRealGain = 0;
+        if (saleDatePost) {
+          if (r.split && (r.split.totalTaxable ?? 0) > 0) {
+            // Bucket B / D: post-2027 tax = taxPost + pro-rata medicare
+            const medicareShare = (r.split.medicare || 0) *
+              ((r.split.postPortionTaxable || 0) / r.split.totalTaxable);
+            taxOnRealGain = (r.split.taxPost || 0) + medicareShare;
+          } else {
+            // Bucket C: actual.taxOnGain IS the new-rules tax on real gain
+            taxOnRealGain = r.actual?.taxOnGain ?? 0;
+          }
+        }
+        const realGainTax = Math.min(realGain, Math.max(0, taxOnRealGain));
+        const realGainKept = Math.max(0, realGain - realGainTax);
         // Cumulative Y-axis position of the "old rules taxable threshold" —
         // the boundary above which old rules starts taxing. Sits between
         // cost base and sale price so it reads naturally on the anatomy
@@ -871,6 +891,8 @@ export default function App() {
           indexedCostBase: indexedCb,
           indexationUplift,
           realGain,
+          realGainKept,
+          realGainTax,
           gainTotal,
           oldRulesTaxable,
           oldRulesThreshold,
@@ -2001,7 +2023,8 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               payload={[
                 { value: 'Cost base', type: 'rect', color: C.anatomyCostBase },
                 { value: 'Indexation uplift', type: 'rect', color: C.anatomyUplift },
-                { value: 'Real gain (taxed)', type: 'rect', color: C.anatomyRealGain },
+                { value: 'Kept after tax', type: 'rect', color: C.anatomyRealGain },
+                { value: 'Tax under new rules', type: 'rect', color: C.anatomyRealGainTax },
                 { value: 'Sale price', type: 'line', color: C.anatomySalePrice },
                 ...(showOverlay
                   ? [{ value: 'Old rules taxable (50% × nominal gain)', type: 'rect', color: C.oldRules }]
@@ -2009,10 +2032,11 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               ]}
               formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
             />
-            {/* Stack: cost base (bottom slab) + indexation uplift + real gain. Total = sale price. */}
+            {/* Stack: cost base + indexation uplift + (kept after tax + tax under new rules) = sale price. */}
             <Area type="monotone" dataKey="costBase" stackId="anatomy" stroke="none" fill={C.anatomyCostBase} fillOpacity={0.9} isAnimationActive={false} name="Cost base" />
             <Area type="monotone" dataKey="indexationUplift" stackId="anatomy" stroke="none" fill={C.anatomyUplift} fillOpacity={0.7} isAnimationActive={false} name="Indexation uplift" />
-            <Area type="monotone" dataKey="realGain" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={0.85} isAnimationActive={false} name="Real gain (taxed)" />
+            <Area type="monotone" dataKey="realGainKept" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={0.9} isAnimationActive={false} name="Kept after tax" />
+            <Area type="monotone" dataKey="realGainTax" stackId="anatomy" stroke="none" fill={C.anatomyRealGainTax} fillOpacity={0.95} isAnimationActive={false} name="Tax under new rules" />
             <Line type="monotone" dataKey="salePrice" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Sale price" />
             {showOverlay && (
               <>
