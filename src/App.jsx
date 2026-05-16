@@ -844,6 +844,11 @@ export default function App() {
         const taxOld = r.oldRules?.taxOnGain ?? 0;
         const taxNew = r.actual?.taxOnGain ?? 0;
         const oldRulesTaxable = r.oldRules?.taxableGain ?? 0;
+        // Cumulative Y-axis position of the "old rules taxable threshold" —
+        // the boundary above which old rules starts taxing. Sits between
+        // cost base and sale price so it reads naturally on the anatomy
+        // chart's dollar y-axis.
+        const oldRulesThreshold = cbForAnatomy + oldRulesTaxable;
         return {
           x: xValue,
           xLabel,
@@ -859,6 +864,7 @@ export default function App() {
           realGain,
           gainTotal,
           oldRulesTaxable,
+          oldRulesThreshold,
           taxOld,
           taxNew,
           taxDiff: taxNew - taxOld,
@@ -1806,12 +1812,12 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
       {row('Total gain', fmt(d.gainTotal))}
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
         {row('Indexation uplift', fmt(d.indexationUplift), C.anatomyUplift)}
-        {row('Real gain (new rules taxable)', fmt(d.realGain), C.anatomyRealGain)}
-        {showOverlay && row('Old rules taxable (50% disc)', fmt(d.oldRulesTaxable), C.oldRules)}
+        {row('New rules taxable (real gain)', fmt(d.realGain), C.anatomyRealGain)}
+        {showOverlay && row('Old rules taxable (50% disc on nominal)', fmt(d.oldRulesTaxable), C.oldRules)}
       </div>
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
-        {row('Tax (new rules)', `${fmt(d.taxNew)} · ${fmtPct((d.newRate ?? 0) / 100, 1)}`, C.newRules)}
-        {row('Tax (old rules)', `${fmt(d.taxOld)} · ${fmtPct((d.oldRate ?? 0) / 100, 1)}`, C.oldRules)}
+        {row('Tax under new rules', `${fmt(d.taxNew)} · ${fmtPct((d.newRate ?? 0) / 100, 1)}`, C.newRules)}
+        {row('Tax under old rules', `${fmt(d.taxOld)} · ${fmtPct((d.oldRate ?? 0) / 100, 1)}`, C.oldRules)}
       </div>
     </div>
   );
@@ -1880,7 +1886,7 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
             <Area type="monotone" dataKey="realGain" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={0.85} isAnimationActive={false} name="Real gain (taxed)" />
             <Line type="monotone" dataKey="salePrice" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Sale price" />
             {showOverlay && (
-              <Line type="monotone" dataKey="oldRulesTaxable" stroke={C.oldRules} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} name="Old rules taxable gain (50% disc)" />
+              <Line type="monotone" dataKey="oldRulesThreshold" stroke={C.oldRules} strokeWidth={2} strokeDasharray="6 4" dot={false} isAnimationActive={false} name="Old rules taxable threshold (above this line is taxed under old rules)" />
             )}
           </ComposedChart>
         </ResponsiveContainer>
