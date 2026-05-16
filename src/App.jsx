@@ -762,6 +762,25 @@ export default function App() {
 
   const update = useCallback((patch) => setInputs((s) => ({ ...s, ...patch })), []);
 
+  // When purchase_date changes, keep focus_years within the slider's valid
+  // range. For old assets the valid window shifts so the previously-stored
+  // focus_years can fall outside the new [min, max]. We also jump to a
+  // sensible default (sale year = max(purchaseYear+10, 2035)) when the
+  // current value would land before commencement.
+  useEffect(() => {
+    const py = new Date(inputs.purchase_date).getFullYear();
+    if (Number.isNaN(py)) return;
+    const minF = Math.max(1, 2026 - py);
+    const maxF = Math.max(25, 2050 - py);
+    const cur = inputs.focus_years;
+    if (cur < minF || cur > maxF) {
+      const defaultSaleYear = Math.max(py + 10, 2035);
+      const defaultFocus = Math.min(maxF, Math.max(minF, defaultSaleYear - py));
+      setInputs((s) => ({ ...s, focus_years: defaultFocus }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputs.purchase_date]);
+
   const isPreCgt = useMemo(() => {
     if (!inputs.purchase_date) return false;
     return new Date(inputs.purchase_date) < LEG.preCgtCutoff;
@@ -1256,6 +1275,12 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
   const showValue2027ManualInput = showValuationToggle && inputs.valuation_method === 'use_entered_value';
   const isProperty = inputs.asset_type === 'property';
   const purchaseYear = purchase.getFullYear();
+  // Slider range, decoupled from purchase date for old assets so the user
+  // can always reach post-commencement sale dates:
+  //   saleYearMin = max(purchaseYear + 1, 2026)
+  //   saleYearMax = max(purchaseYear + 25, 2050)
+  const focusYearsMin = Math.max(1, 2026 - purchaseYear);
+  const focusYearsMax = Math.max(25, 2050 - purchaseYear);
 
   const acqLabel = isProperty ? 'Stamp duty + legal fees' : 'Acquisition costs';
   const improvementsLabel = isProperty
@@ -1335,10 +1360,10 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
         <div>
           <Label>Sale year</Label>
           <Slider
-            value={inputs.focus_years}
+            value={Math.min(focusYearsMax, Math.max(focusYearsMin, inputs.focus_years))}
             onChange={(v) => update({ focus_years: v })}
-            min={1}
-            max={SALE_YEAR_SPAN}
+            min={focusYearsMin}
+            max={focusYearsMax}
             step={1}
             format={(v) => `${purchaseYear + v} · ${v}y`}
           />
