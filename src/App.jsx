@@ -32,14 +32,21 @@ const C = {
   healthy: '#10b981', healthyBg: '#d1fae5', healthyText: '#065f46',
   warning: '#f59e0b', warningBg: '#fef3c7', warningText: '#92400e',
   risk: '#ef4444', riskBg: '#fee2e2', riskText: '#991b1b',
-  oldRules: '#0d9488',
-  newRules: '#f59e0b',
+  oldRules: '#F43F5E',             // rose-500 — old regime indicator + "worse" semantic
+  newRules: '#0D9488',             // teal-600 — new regime indicator
   preCgt: '#10b981',
   // Anatomy panel fills
-  anatomyCostBase: '#e5e7eb',      // light grey
-  anatomyUplift: '#99f6e4',        // light teal — distinct from oldRules teal
-  anatomyRealGain: '#fb923c',      // vivid orange — matches newRules family
-  anatomySalePrice: '#0f172a',     // dark slate for overlay line
+  anatomyCostBase: '#F1F5F9',      // slate-100 — soft grey
+  anatomyUplift: '#CCFBF1',        // teal-100 — ties to new rules
+  anatomyRealGain: '#FEF3C7',      // amber-100 — soft yellow, neutral (a gain isn't bad)
+  anatomySalePrice: '#0F172A',     // slate-900 — strong overlay line
+  // Semantic shading reserved for "new is better / worse" comparisons in
+  // Panels 2 and 3 only.
+  semanticBetter: '#10B981',       // emerald-500
+  semanticWorse: '#F43F5E',        // rose-500 — same hue as old rules by design
+  // Chart system grid + cutoff marker (lighter than UI border tokens).
+  chartGrid: '#F1F5F9',            // slate-100
+  chartCutoff: '#94A3B8',           // slate-400
 };
 
 const FONT_BODY = "'Plus Jakarta Sans', system-ui, sans-serif";
@@ -412,7 +419,7 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket, incomeSupport
   if (isSplit) {
     if (bucket === 'B') {
       leftLabel = '50% discount';
-      leftColor = C.teal;
+      leftColor = C.oldRules;
       rightLabel = newRulesLabel;
       rightColor = C.newRules;
     } else {
@@ -423,7 +430,7 @@ function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket, incomeSupport
     }
   } else if (bucket === 'A') {
     singleLabel = isPreCgt ? 'Pre-CGT exempt' : '50% discount';
-    singleColor = isPreCgt ? C.preCgt : C.teal;
+    singleColor = isPreCgt ? C.preCgt : C.oldRules;
   } else {
     singleLabel = newRulesLabel;
     singleColor = C.newRules;
@@ -600,9 +607,9 @@ function ParamsModal({ onClose }) {
 
 function BucketsDiagram() {
   const rows = [
-    { key: 'A', desc: 'Bought & sold before 1 Jul 2027', pre: 100, post: 0, preColor: C.teal },
-    { key: 'B', desc: 'Bought before, sold after', pre: 60, post: 40, preColor: C.teal },
-    { key: 'C', desc: 'Bought after 1 Jul 2027', pre: 0, post: 100, preColor: C.teal },
+    { key: 'A', desc: 'Bought & sold before 1 Jul 2027', pre: 100, post: 0, preColor: C.oldRules },
+    { key: 'B', desc: 'Bought before, sold after', pre: 60, post: 40, preColor: C.oldRules },
+    { key: 'C', desc: 'Bought after 1 Jul 2027', pre: 0, post: 100, preColor: C.oldRules },
     { key: 'D', desc: 'Pre-1985 asset, sold after', pre: 60, post: 40, preColor: C.preCgt },
   ];
   return (
@@ -1769,9 +1776,9 @@ function CutoffReference({ data, label = '1 Jul 2027' }) {
   return (
     <ReferenceLine
       x={cutoff}
-      stroke={C.textMuted}
+      stroke={C.chartCutoff}
       strokeDasharray="3 3"
-      label={{ value: label, fontSize: 10, fill: C.textMuted, position: 'top' }}
+      label={{ value: label, fontSize: 10, fill: C.chartCutoff, position: 'top' }}
     />
   );
 }
@@ -1842,7 +1849,7 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
       <div style={{ width: '100%', height }}>
         <ResponsiveContainer>
           <ComposedChart data={data} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
-            <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
+            <CartesianGrid stroke={C.chartGrid} strokeDasharray="3 3" vertical={false} />
             <XAxis
               {...getXAxisProps(data)}
               label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
@@ -1885,8 +1892,8 @@ function TaxDiffTooltip({ active, payload, label }) {
   const diff = d.taxDiff || 0;
   const epsilon = 0.5;
   let labelText, color;
-  if (diff > epsilon) { labelText = 'New rules costs more'; color = C.risk; }
-  else if (diff < -epsilon) { labelText = 'New rules costs less'; color = C.healthy; }
+  if (diff > epsilon) { labelText = 'New rules costs more'; color = C.semanticWorse; }
+  else if (diff < -epsilon) { labelText = 'New rules costs less'; color = C.semanticBetter; }
   else { labelText = 'Same'; color = C.textMuted; }
   return (
     <div style={{
@@ -1938,7 +1945,7 @@ function DiffPanel({ data, height = 220 }) {
       <div style={{ width: '100%', height }}>
         <ResponsiveContainer>
           <ComposedChart data={points} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
-            <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
+            <CartesianGrid stroke={C.chartGrid} strokeDasharray="3 3" vertical={false} />
             <XAxis
               {...getXAxisProps(data)}
               label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
@@ -1962,8 +1969,8 @@ function DiffPanel({ data, height = 220 }) {
             <CutoffReference data={data} />
             {/* Conditional band: transparent base + coloured gap (only one is non-zero per point) */}
             <Area type="monotone" dataKey="base" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} activeDot={false} />
-            <Area type="monotone" dataKey="gapRed" stackId="band" stroke="none" fill={C.risk} fillOpacity={0.22} isAnimationActive={false} activeDot={false} />
-            <Area type="monotone" dataKey="gapGreen" stackId="band" stroke="none" fill={C.healthy} fillOpacity={0.22} isAnimationActive={false} activeDot={false} />
+            <Area type="monotone" dataKey="gapRed" stackId="band" stroke="none" fill={C.semanticWorse} fillOpacity={0.18} isAnimationActive={false} activeDot={false} />
+            <Area type="monotone" dataKey="gapGreen" stackId="band" stroke="none" fill={C.semanticBetter} fillOpacity={0.18} isAnimationActive={false} activeDot={false} />
             <Line type="monotone" dataKey="taxOld" stroke={C.oldRules} strokeWidth={2} dot={false} isAnimationActive={false} name="Old rules tax" />
             <Line type="monotone" dataKey="taxNew" stroke={C.newRules} strokeWidth={2} dot={false} isAnimationActive={false} name="New rules tax" />
           </ComposedChart>
@@ -1998,16 +2005,34 @@ function RateTooltip({ active, payload, label }) {
 }
 
 function RatePanel({ data, height = 220 }) {
+  // Same band trick as DiffPanel: transparent base + one coloured gap layer.
+  // Semantic: new < old = BETTER (emerald); new > old = WORSE (rose).
+  const points = data.map((d) => {
+    const oldR = d.oldRate ?? 0;
+    const newR = d.newRate ?? 0;
+    const lo = Math.min(oldR, newR);
+    const gap = Math.abs(newR - oldR);
+    const newWorse = newR > oldR;
+    return {
+      x: d.x,
+      xLabel: d.xLabel,
+      oldRate: oldR,
+      newRate: newR,
+      base: lo,
+      gapRed: newWorse ? gap : 0,
+      gapGreen: !newWorse ? gap : 0,
+    };
+  });
   return (
     <div>
       <PanelHeader
         title="Effective rate comparison"
-        subtitle="Tax as a percentage of nominal gain. Y-axis fixed 0–50%."
+        subtitle="Tax as a percentage of nominal gain. Y-axis fixed 0–50%. Shaded band between the two lines marks the regime difference."
       />
       <div style={{ width: '100%', height }}>
         <ResponsiveContainer>
-          <LineChart data={data} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
-            <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
+          <ComposedChart data={points} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
+            <CartesianGrid stroke={C.chartGrid} strokeDasharray="3 3" vertical={false} />
             <XAxis
               {...getXAxisProps(data)}
               label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
@@ -2021,12 +2046,21 @@ function RatePanel({ data, height = 220 }) {
               width={60}
             />
             <Tooltip content={<RateTooltip />} />
-            <Legend verticalAlign="top" height={26} iconType="line"
-              formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>} />
+            <Legend
+              verticalAlign="top" height={26} iconType="line"
+              payload={[
+                { value: 'Old rules', type: 'line', color: C.oldRules },
+                { value: 'New rules', type: 'line', color: C.newRules },
+              ]}
+              formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
+            />
             <CutoffReference data={data} />
+            <Area type="monotone" dataKey="base" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} activeDot={false} />
+            <Area type="monotone" dataKey="gapRed" stackId="band" stroke="none" fill={C.semanticWorse} fillOpacity={0.18} isAnimationActive={false} activeDot={false} />
+            <Area type="monotone" dataKey="gapGreen" stackId="band" stroke="none" fill={C.semanticBetter} fillOpacity={0.18} isAnimationActive={false} activeDot={false} />
             <Line type="monotone" dataKey="oldRate" stroke={C.oldRules} strokeWidth={2} dot={false} isAnimationActive={false} name="Old rules" />
             <Line type="monotone" dataKey="newRate" stroke={C.newRules} strokeWidth={2} dot={false} isAnimationActive={false} name="New rules" />
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
     </div>
