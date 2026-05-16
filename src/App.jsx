@@ -1864,7 +1864,7 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               tickFormatter={fmtK}
               width={60}
               domain={[yMin, yMax]}
-              allowDataOverflow={false}
+              allowDataOverflow={true}
             />
             <Tooltip content={<AnatomyTooltip showOverlay={showOverlay} />} />
             <Legend
