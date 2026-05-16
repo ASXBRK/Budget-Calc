@@ -2047,6 +2047,28 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
             )}
             {/* Paint after data so the marker stays on top */}
             <CutoffReference data={data} label="1 July 2027 — new rules commence" />
+            {/* TEMPORARY DIAGNOSTIC: bright red control marker at the
+                chart's third sale year. If THIS doesn't render, the
+                problem is with how ReferenceLine integrates with this
+                chart, not with CutoffReference. If it DOES render,
+                the issue is inside CutoffReference (likely the x value
+                returned by cutoffXLabel doesn't match Recharts'
+                expectation for category axes here). */}
+            {data.length >= 3 && (
+              <ReferenceLine
+                x={data[2].xLabel}
+                stroke="#FF0000"
+                strokeWidth={5}
+                strokeOpacity={1}
+                isFront={true}
+                label={{
+                  value: `DEBUG ${data[2].xLabel} (type ${typeof data[2].xLabel})`,
+                  fontSize: 10,
+                  fill: '#FF0000',
+                  position: 'top',
+                }}
+              />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
