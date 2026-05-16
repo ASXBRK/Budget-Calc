@@ -767,16 +767,33 @@ export default function App() {
   // focus_years can fall outside the new [min, max]. We also jump to a
   // sensible default (sale year = max(purchaseYear+10, 2035)) when the
   // current value would land before commencement.
+  //
+  // For pre-CGT dates: auto-populate a starter value_2027 when missing, so
+  // the chart panels render immediately rather than dropping into the
+  // engine's "awaiting_value_2027" soft state which hides everything. The
+  // user can refine via the Asset-details input.
   useEffect(() => {
-    const py = new Date(inputs.purchase_date).getFullYear();
+    const pdRaw = new Date(inputs.purchase_date);
+    const py = pdRaw.getFullYear();
     if (Number.isNaN(py)) return;
     const minF = Math.max(1, 2026 - py);
     const maxF = Math.max(25, 2050 - py);
     const cur = inputs.focus_years;
+    const patch = {};
     if (cur < minF || cur > maxF) {
       const defaultSaleYear = Math.max(py + 10, 2035);
-      const defaultFocus = Math.min(maxF, Math.max(minF, defaultSaleYear - py));
-      setInputs((s) => ({ ...s, focus_years: defaultFocus }));
+      patch.focus_years = Math.min(maxF, Math.max(minF, defaultSaleYear - py));
+    }
+    const isPreCgtDate = pdRaw < LEG.preCgtCutoff;
+    if (isPreCgtDate && (!inputs.value_2027 || inputs.value_2027 <= 0)) {
+      const yearsTo2027 = Math.max(2027 - py, 1);
+      const seed = (inputs.purchase_price || 100000) * Math.pow(1.06, yearsTo2027);
+      if (Number.isFinite(seed) && seed > 0) {
+        patch.value_2027 = Math.round(seed);
+      }
+    }
+    if (Object.keys(patch).length > 0) {
+      setInputs((s) => ({ ...s, ...patch }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputs.purchase_date]);
@@ -2082,19 +2099,29 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
 //   - No taxable gain anywhere (e.g. pre-CGT pre-2027 sales): yMin = 0,
 //     the entire asset value renders as cost base.
 function computeAnatomyYDomain(data) {
-  if (!data?.length) return { yMin: 0, yMax: 100 };
-  const minCb = Math.min(...data.map((d) => d.costBase ?? 0));
-  const maxSale = Math.max(...data.map((d) => d.salePrice ?? 0));
-  const hasGain = data.some((d) => (d.indexationUplift ?? 0) > 0 || (d.realGain ?? 0) > 0);
+  const fallback = { yMin: 0, yMax: 100 };
+  if (!data?.length) return fallback;
+  const finiteOr0 = (v) => (Number.isFinite(v) ? v : 0);
+  const costs = data.map((d) => finiteOr0(d.costBase));
+  const sales = data.map((d) => finiteOr0(d.salePrice));
+  const minCb = Math.min(...costs);
+  const maxSale = Math.max(...sales);
+  const hasGain = data.some(
+    (d) => finiteOr0(d.indexationUplift) > 0 || finiteOr0(d.realGain) > 0
+  );
+  if (!Number.isFinite(minCb) || !Number.isFinite(maxSale)) return fallback;
   if (!hasGain || maxSale <= 0) {
     return { yMin: 0, yMax: Math.max(maxSale * 1.05, 1) };
   }
-  const gainRatio = (maxSale - minCb) / maxSale;
+  const gainRatio = (maxSale - minCb) / Math.max(maxSale, 1);
   const buffer = gainRatio < 0.1 ? 0.10 : 0.05;
-  return {
-    yMin: Math.max(0, minCb * (1 - buffer)),
-    yMax: maxSale * (1 + buffer),
-  };
+  const yMin = Math.max(0, minCb * (1 - buffer));
+  const yMax = maxSale * (1 + buffer);
+  // Guard: if the resulting domain is degenerate, fall back to [0, maxSale].
+  if (!Number.isFinite(yMin) || !Number.isFinite(yMax) || yMin >= yMax) {
+    return { yMin: 0, yMax: Math.max(maxSale, 1) };
+  }
+  return { yMin, yMax };
 }
 
 // ---------- Panel 2: Tax difference ----------
