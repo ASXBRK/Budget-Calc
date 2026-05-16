@@ -1801,8 +1801,8 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
       padding: 10, fontSize: 11, fontFamily: FONT_BODY, minWidth: 240,
     }}>
       <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>Sale year {label}</div>
-      {row('Cost base (context)', fmt(d.costBase))}
-      {row('Sale price', fmt(d.salePrice))}
+      {row('Sale price', fmt(d.salePrice), C.anatomySalePrice)}
+      {row('Cost base', fmt(d.costBase))}
       {row('Total gain', fmt(d.gainTotal))}
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
         {row('Indexation uplift', fmt(d.indexationUplift), C.anatomyUplift)}
@@ -1820,13 +1820,17 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
 function AnatomyPanel({ data, height = 340, costBaseLabel }) {
   const [showOverlay, setShowOverlay] = useState(false);
 
+  // Dynamic Y-axis so the cost base sits as a thin reference slab at the
+  // bottom, leaving room for indexation + real gain above.
+  const { yMin, yMax } = computeAnatomyYDomain(data);
+
   return (
     <div>
       <PanelHeader
         title="Gain anatomy under new rules"
         subtitle={
           <>
-            <div>Stacked total = gain above cost base. Indexation uplift erodes the gain; what remains as <em>real gain</em> is what the new rules tax.</div>
+            <div>Cost base sits as a thin reference slab at the bottom. Indexation uplift + real gain stack above. The real gain layer is what new rules tax.</div>
             {costBaseLabel && (
               <div style={{ fontFamily: FONT_MONO, marginTop: 2, color: C.textSecondary }}>
                 {costBaseLabel}
@@ -1859,7 +1863,8 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
               tickFormatter={fmtK}
               width={60}
-              domain={[0, 'auto']}
+              domain={[yMin, yMax]}
+              allowDataOverflow={false}
             />
             <Tooltip content={<AnatomyTooltip showOverlay={showOverlay} />} />
             <Legend
@@ -1869,10 +1874,11 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
             />
             <CutoffReference data={data} label="New rules commence" />
-            {/* Stack: uplift (bottom) + real gain (top). Total = gain above cost base. */}
+            {/* Stack: cost base (bottom slab) + indexation uplift + real gain. Total = sale price. */}
+            <Area type="monotone" dataKey="costBase" stackId="anatomy" stroke="none" fill={C.anatomyCostBase} fillOpacity={0.9} isAnimationActive={false} name="Cost base" />
             <Area type="monotone" dataKey="indexationUplift" stackId="anatomy" stroke="none" fill={C.anatomyUplift} fillOpacity={0.7} isAnimationActive={false} name="Indexation uplift" />
-            <Area type="monotone" dataKey="realGain" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={0.7} isAnimationActive={false} name="Real gain (taxed)" />
-            <Line type="monotone" dataKey="gainTotal" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Total gain" />
+            <Area type="monotone" dataKey="realGain" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={0.85} isAnimationActive={false} name="Real gain (taxed)" />
+            <Line type="monotone" dataKey="salePrice" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Sale price" />
             {showOverlay && (
               <Line type="monotone" dataKey="oldRulesTaxable" stroke={C.oldRules} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} name="Old rules taxable gain (50% disc)" />
             )}
@@ -1881,6 +1887,29 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
       </div>
     </div>
   );
+}
+
+// Y-axis domain helper for AnatomyPanel. Keeps the cost base visible as a
+// thin slab and gives most of the vertical real estate to the gain anatomy.
+//   - Default buffer: 5% on each side of cost base / sale price.
+//   - Very small gains ((sale - cost) / sale < 10%): 10% buffer to avoid
+//     a cramped chart.
+//   - No taxable gain anywhere (e.g. pre-CGT pre-2027 sales): yMin = 0,
+//     the entire asset value renders as cost base.
+function computeAnatomyYDomain(data) {
+  if (!data?.length) return { yMin: 0, yMax: 100 };
+  const minCb = Math.min(...data.map((d) => d.costBase ?? 0));
+  const maxSale = Math.max(...data.map((d) => d.salePrice ?? 0));
+  const hasGain = data.some((d) => (d.indexationUplift ?? 0) > 0 || (d.realGain ?? 0) > 0);
+  if (!hasGain || maxSale <= 0) {
+    return { yMin: 0, yMax: Math.max(maxSale * 1.05, 1) };
+  }
+  const gainRatio = (maxSale - minCb) / maxSale;
+  const buffer = gainRatio < 0.1 ? 0.10 : 0.05;
+  return {
+    yMin: Math.max(0, minCb * (1 - buffer)),
+    yMax: maxSale * (1 + buffer),
+  };
 }
 
 // ---------- Panel 2: Tax difference ----------
