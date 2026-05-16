@@ -833,8 +833,10 @@ export default function App() {
         const indexedCb = cbForAnatomy * inflFactor;
         const indexationUplift = Math.max(0, indexedCb - cbForAnatomy);
         const realGain = Math.max(0, Math.round(sp) - indexedCb);
+        const gainTotal = Math.max(0, Math.round(sp) - cbForAnatomy);
         const taxOld = r.oldRules?.taxOnGain ?? 0;
         const taxNew = r.actual?.taxOnGain ?? 0;
+        const oldRulesTaxable = r.oldRules?.taxableGain ?? 0;
         return {
           x: xValue,
           xLabel,
@@ -848,6 +850,8 @@ export default function App() {
           indexedCostBase: indexedCb,
           indexationUplift,
           realGain,
+          gainTotal,
+          oldRulesTaxable,
           taxOld,
           taxNew,
           taxDiff: taxNew - taxOld,
@@ -1089,9 +1093,17 @@ export default function App() {
 
           {showResults && chartData.length > 0 && (
             <Card>
-              <AnatomyPanel data={chartData} height={340} />
+              <AnatomyPanel
+                data={chartData}
+                height={340}
+                costBaseLabel={
+                  isPreCgt
+                    ? `Pre-CGT: cost base resets to ${fmt(inputs.value_2027 || 0)} at 1 Jul 2027`
+                    : `Cost base: ${fmt(costBase)}`
+                }
+              />
               <div style={{ height: 32 }} />
-              <DiffPanel data={chartData} height={200} />
+              <DiffPanel data={chartData} height={220} />
               <div style={{ height: 32 }} />
               <RatePanel data={chartData} height={220} />
             </Card>
@@ -1430,7 +1442,15 @@ function PdfReport({ inputs, focusScenario, result, chartData, isPreCgt }) {
 
       {/* Three-panel stack — PDF heights compressed to fit one A4 page */}
       <div style={{ marginTop: 10, width: 700 }}>
-        <AnatomyPanel data={chartData} height={170} />
+        <AnatomyPanel
+          data={chartData}
+          height={170}
+          costBaseLabel={
+            isPreCgt
+              ? `Pre-CGT: cost base resets to ${fmt(inputs.value_2027 || 0)} at 1 Jul 2027`
+              : `Cost base: ${fmt(inputs.purchase_price + (inputs.acquisition_costs || 0) + (inputs.capital_improvements || 0) - (inputs.asset_type === 'property' ? (inputs.depreciation_claimed || 0) : 0))}`
+          }
+        />
       </div>
       <div style={{ marginTop: 6, width: 700 }}>
         <DiffPanel data={chartData} height={120} />
@@ -1702,15 +1722,25 @@ function cutoffXLabel(data) {
   return null;
 }
 
+// Adaptive tick density — keeps long-hold scenarios readable.
+function tickIntervalFor(n) {
+  if (n <= 10) return 0;   // every year
+  if (n <= 20) return 1;   // every 2 years
+  if (n <= 40) return 4;   // every 5 years
+  return 9;                // every 10 years
+}
+
 // Shared XAxis config so all three panels align column-by-column.
-const sharedXAxisProps = {
-  dataKey: 'xLabel',
-  type: 'category',
-  interval: 0,
-  padding: { left: 0, right: 0 },
-  stroke: C.textSubtle,
-  tick: { fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted },
-};
+function getXAxisProps(data) {
+  return {
+    dataKey: 'xLabel',
+    type: 'category',
+    interval: tickIntervalFor(data.length),
+    padding: { left: 0, right: 0 },
+    stroke: C.textSubtle,
+    tick: { fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted },
+  };
+}
 
 function PanelHeader({ title, subtitle, right }) {
   return (
@@ -1746,9 +1776,9 @@ function CutoffReference({ data, label = '1 Jul 2027' }) {
   );
 }
 
-// ---------- Panel 1: New rules anatomy ----------
+// ---------- Panel 1: Gain anatomy under new rules ----------
 
-function AnatomyTooltip({ active, payload, label }) {
+function AnatomyTooltip({ active, payload, label, showOverlay }) {
   if (!active || !payload?.length) return null;
   const d = payload[0]?.payload;
   if (!d) return null;
@@ -1761,30 +1791,42 @@ function AnatomyTooltip({ active, payload, label }) {
   return (
     <div style={{
       background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
-      padding: 10, fontSize: 11, fontFamily: FONT_BODY, minWidth: 220,
+      padding: 10, fontSize: 11, fontFamily: FONT_BODY, minWidth: 240,
     }}>
       <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>Sale year {label}</div>
-      {row('Sale price', fmt(d.salePrice), C.anatomySalePrice)}
-      {row('Cost base', fmt(d.costBase))}
-      {row('Indexation uplift', fmt(d.indexationUplift))}
-      {row('Real gain', fmt(d.realGain), C.anatomyRealGain)}
+      {row('Cost base (context)', fmt(d.costBase))}
+      {row('Sale price', fmt(d.salePrice))}
+      {row('Total gain', fmt(d.gainTotal))}
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
-        {row('Tax (new rules)', `${fmt(d.taxNew)} · ${fmtPct(d.newRate / 100, 1)}`, C.newRules)}
-        {row('Tax (old rules)', `${fmt(d.taxOld)} · ${fmtPct(d.oldRate / 100, 1)}`, C.oldRules)}
+        {row('Indexation uplift', fmt(d.indexationUplift), C.anatomyUplift)}
+        {row('Real gain (new rules taxable)', fmt(d.realGain), C.anatomyRealGain)}
+        {showOverlay && row('Old rules taxable (50% disc)', fmt(d.oldRulesTaxable), C.oldRules)}
+      </div>
+      <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
+        {row('Tax (new rules)', `${fmt(d.taxNew)} · ${fmtPct((d.newRate ?? 0) / 100, 1)}`, C.newRules)}
+        {row('Tax (old rules)', `${fmt(d.taxOld)} · ${fmtPct((d.oldRate ?? 0) / 100, 1)}`, C.oldRules)}
       </div>
     </div>
   );
 }
 
-function AnatomyPanel({ data, height = 340 }) {
+function AnatomyPanel({ data, height = 340, costBaseLabel }) {
   const [showOverlay, setShowOverlay] = useState(false);
-  const opacity = showOverlay ? 0.25 : 0.75;
 
   return (
     <div>
       <PanelHeader
-        title="New rules anatomy"
-        subtitle="Sale price = cost base + indexation uplift + real gain. Real gain is what new rules tax."
+        title="Gain anatomy under new rules"
+        subtitle={
+          <>
+            <div>Stacked total = gain above cost base. Indexation uplift erodes the gain; what remains as <em>real gain</em> is what the new rules tax.</div>
+            {costBaseLabel && (
+              <div style={{ fontFamily: FONT_MONO, marginTop: 2, color: C.textSecondary }}>
+                {costBaseLabel}
+              </div>
+            )}
+          </>
+        }
         right={
           <button
             onClick={() => setShowOverlay((v) => !v)}
@@ -1793,7 +1835,7 @@ function AnatomyPanel({ data, height = 340 }) {
               padding: '4px 10px', fontSize: 11,
             }}
           >
-            {showOverlay ? 'Hide tax overlay' : 'Show old rules overlay'}
+            {showOverlay ? 'Hide old rules overlay' : 'Show old rules overlay'}
           </button>
         }
       />
@@ -1802,7 +1844,7 @@ function AnatomyPanel({ data, height = 340 }) {
           <ComposedChart data={data} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
             <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
             <XAxis
-              {...sharedXAxisProps}
+              {...getXAxisProps(data)}
               label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
             />
             <YAxis
@@ -1810,8 +1852,9 @@ function AnatomyPanel({ data, height = 340 }) {
               tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
               tickFormatter={fmtK}
               width={60}
+              domain={[0, 'auto']}
             />
-            <Tooltip content={<AnatomyTooltip />} />
+            <Tooltip content={<AnatomyTooltip showOverlay={showOverlay} />} />
             <Legend
               verticalAlign="top"
               height={26}
@@ -1819,15 +1862,12 @@ function AnatomyPanel({ data, height = 340 }) {
               formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
             />
             <CutoffReference data={data} label="New rules commence" />
-            <Area type="monotone" dataKey="costBase" stackId="anatomy" stroke="none" fill={C.anatomyCostBase} fillOpacity={opacity} isAnimationActive={false} name="Cost base" />
-            <Area type="monotone" dataKey="indexationUplift" stackId="anatomy" stroke="none" fill={C.anatomyUplift} fillOpacity={opacity} isAnimationActive={false} name="Indexation uplift" />
-            <Area type="monotone" dataKey="realGain" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={opacity} isAnimationActive={false} name="Real gain" />
-            <Line type="monotone" dataKey="salePrice" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Sale price" />
+            {/* Stack: uplift (bottom) + real gain (top). Total = gain above cost base. */}
+            <Area type="monotone" dataKey="indexationUplift" stackId="anatomy" stroke="none" fill={C.anatomyUplift} fillOpacity={0.7} isAnimationActive={false} name="Indexation uplift" />
+            <Area type="monotone" dataKey="realGain" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={0.7} isAnimationActive={false} name="Real gain (taxed)" />
+            <Line type="monotone" dataKey="gainTotal" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Total gain" />
             {showOverlay && (
-              <Line type="monotone" dataKey="taxNew" stroke={C.newRules} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} name="Tax owed (new rules)" />
-            )}
-            {showOverlay && (
-              <Line type="monotone" dataKey="taxOld" stroke={C.oldRules} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} name="Tax owed (old rules)" />
+              <Line type="monotone" dataKey="oldRulesTaxable" stroke={C.oldRules} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} name="Old rules taxable gain (50% disc)" />
             )}
           </ComposedChart>
         </ResponsiveContainer>
@@ -1870,43 +1910,63 @@ function TaxDiffTooltip({ active, payload, label }) {
   );
 }
 
-function DiffPanel({ data, height = 200 }) {
-  // Split into pos (new costs more, red) and neg (new costs less, green) for fill.
-  const points = data.map((d) => ({
-    x: d.x,
-    xLabel: d.xLabel,
-    pos: d.taxDiff > 0 ? d.taxDiff : 0,
-    neg: d.taxDiff < 0 ? d.taxDiff : 0,
-    taxDiff: d.taxDiff,
-    taxOld: d.taxOld,
-    taxNew: d.taxNew,
-  }));
+// Two solid tax lines (old, new) with a conditional shaded band between them.
+// Band achieved with a transparent base + a coloured gap layer, stacked.
+function DiffPanel({ data, height = 220 }) {
+  const points = data.map((d) => {
+    const oldT = d.taxOld ?? 0;
+    const newT = d.taxNew ?? 0;
+    const lo = Math.min(oldT, newT);
+    const gap = Math.abs(newT - oldT);
+    const newCostsMore = newT > oldT;
+    return {
+      x: d.x,
+      xLabel: d.xLabel,
+      taxOld: oldT,
+      taxNew: newT,
+      base: lo,
+      gapRed: newCostsMore ? gap : 0,
+      gapGreen: !newCostsMore ? gap : 0,
+    };
+  });
   return (
     <div>
       <PanelHeader
-        title="Tax difference"
-        subtitle="Tax under new rules minus tax under old rules. Above zero = new rules costs more; below zero = new rules costs less."
+        title="Tax owed under each regime"
+        subtitle="Solid lines = tax payable at each sale year. The shaded band between them is the difference — red where new rules cost more, green where new rules cost less."
       />
       <div style={{ width: '100%', height }}>
         <ResponsiveContainer>
-          <AreaChart data={points} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
+          <ComposedChart data={points} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
             <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
             <XAxis
-              {...sharedXAxisProps}
+              {...getXAxisProps(data)}
               label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
             />
             <YAxis
               stroke={C.textSubtle}
               tick={{ fontSize: 11, fontFamily: FONT_MONO, fill: C.textMuted }}
+              domain={[0, 'auto']}
               tickFormatter={fmtK}
               width={60}
             />
-            <ReferenceLine y={0} stroke={C.textMuted} />
-            <CutoffReference data={data} />
             <Tooltip content={<TaxDiffTooltip />} />
-            <Area type="monotone" dataKey="pos" stroke={C.risk} strokeWidth={1} fill={C.risk} fillOpacity={0.35} isAnimationActive={false} activeDot={false} name="New costs more" />
-            <Area type="monotone" dataKey="neg" stroke={C.healthy} strokeWidth={1} fill={C.healthy} fillOpacity={0.35} isAnimationActive={false} activeDot={false} name="New costs less" />
-          </AreaChart>
+            <Legend
+              verticalAlign="top" height={26} iconType="line"
+              payload={[
+                { value: 'Old rules tax', type: 'line', color: C.oldRules },
+                { value: 'New rules tax', type: 'line', color: C.newRules },
+              ]}
+              formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
+            />
+            <CutoffReference data={data} />
+            {/* Conditional band: transparent base + coloured gap (only one is non-zero per point) */}
+            <Area type="monotone" dataKey="base" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} activeDot={false} />
+            <Area type="monotone" dataKey="gapRed" stackId="band" stroke="none" fill={C.risk} fillOpacity={0.22} isAnimationActive={false} activeDot={false} />
+            <Area type="monotone" dataKey="gapGreen" stackId="band" stroke="none" fill={C.healthy} fillOpacity={0.22} isAnimationActive={false} activeDot={false} />
+            <Line type="monotone" dataKey="taxOld" stroke={C.oldRules} strokeWidth={2} dot={false} isAnimationActive={false} name="Old rules tax" />
+            <Line type="monotone" dataKey="taxNew" stroke={C.newRules} strokeWidth={2} dot={false} isAnimationActive={false} name="New rules tax" />
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
     </div>
@@ -1949,7 +2009,7 @@ function RatePanel({ data, height = 220 }) {
           <LineChart data={data} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
             <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false} />
             <XAxis
-              {...sharedXAxisProps}
+              {...getXAxisProps(data)}
               label={{ value: 'Sale year', position: 'insideBottom', fontSize: 11, fill: C.textMuted, dy: 14 }}
             />
             <YAxis
