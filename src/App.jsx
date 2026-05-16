@@ -1841,10 +1841,16 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
   if (!active || !payload?.length) return null;
   const d = payload[0]?.payload;
   if (!d) return null;
+  const isPost = d.x >= 2027;
   const row = (k, v, color) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
       <span style={{ color: color || C.textMuted }}>{k}</span>
       <span style={{ fontFamily: FONT_MONO, fontWeight: 600 }}>{v}</span>
+    </div>
+  );
+  const preCommenceFooter = (
+    <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, fontStyle: 'italic', color: C.textSecondary }}>
+      New rules commence 1 July 2027 — old rules apply to this sale year.
     </div>
   );
   return (
@@ -1856,16 +1862,21 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
       {row('Sale price', fmt(d.salePrice), C.anatomySalePrice)}
       {row('Cost base', fmt(d.costBase))}
       {row('Total gain', fmt(d.gainTotal))}
+      {/* Anatomy section: only show new-rules-specific rows when new rules apply.
+          The coral overlay row still renders pre-commencement (old rules apply). */}
+      {(isPost || (showOverlay && !isPost)) && (
+        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
+          {isPost && row('Indexation uplift', fmt(d.indexationUplift), C.anatomyUplift)}
+          {isPost && row('New rules taxable (real gain)', fmt(d.realGain), C.anatomyRealGain)}
+          {showOverlay && row('Old rules taxable (50% × nominal)', fmt(d.oldRulesTaxable), C.oldRules)}
+        </div>
+      )}
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
-        {row('Indexation uplift', fmt(d.indexationUplift), C.anatomyUplift)}
-        {row('New rules taxable (real gain)', fmt(d.realGain), C.anatomyRealGain)}
-        {showOverlay && row('Old rules taxable (50% × nominal)', fmt(d.oldRulesTaxable), C.oldRules)}
-      </div>
-      <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
-        {row('Tax under new rules', `${fmt(d.taxNew)} · ${fmtPct((d.newRate ?? 0) / 100, 1)}`, C.newRules)}
+        {isPost && row('Tax under new rules', `${fmt(d.taxNew)} · ${fmtPct((d.newRate ?? 0) / 100, 1)}`, C.newRules)}
         {row('Tax under old rules', `${fmt(d.taxOld)} · ${fmtPct((d.oldRate ?? 0) / 100, 1)}`, C.oldRules)}
       </div>
-      {showOverlay && (() => {
+      {/* Post-2027: comparison sentence. Pre-2027: footer note instead. */}
+      {isPost && showOverlay && (() => {
         const newTaxable = d.realGain ?? 0;
         const oldTaxable = d.oldRulesTaxable ?? 0;
         const gap = Math.abs(newTaxable - oldTaxable);
@@ -1879,6 +1890,7 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
           </div>
         );
       })()}
+      {!isPost && preCommenceFooter}
     </div>
   );
 }
