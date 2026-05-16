@@ -896,16 +896,10 @@ export default function App() {
           gainTotal,
           oldRulesTaxable,
           oldRulesThreshold,
-          // Coral overlay region: top edge = sale price, height = old-rules
-          // taxable amount. Stacked from y=0 with two areas: a transparent
-          // base of (salePrice - oldRulesTaxable), then a coral layer of
-          // oldRulesTaxable. Their sum reaches exactly sale price — so the
-          // coral region sits in [salePrice - oldRulesTaxable, salePrice],
-          // never extending above the sale price line. Anchoring to
-          // salePrice rather than cbForAnatomy keeps it correct for
-          // Bucket B where cbForAnatomy = value_2027 (CAGR-projected).
-          oldRulesOverlayBase: Math.max(0, Math.round(sp) - oldRulesTaxable),
-          oldRulesOverlayGap: oldRulesTaxable,
+          // Y-position of the "kept after old rules tax" dashed line.
+          // = salePrice - taxOld. Null pre-commencement so the Line skips
+          // those points (connectNulls={false}).
+          oldRulesAfterTaxY: saleDatePost ? Math.max(0, Math.round(sp) - taxOld) : null,
           taxOld,
           taxNew,
           taxDiff: taxNew - taxOld,
@@ -1943,13 +1937,13 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
       </div>
       {/* Post-2027: comparison sentence. Pre-2027: footer note instead. */}
       {isPost && showOverlay && (() => {
-        const newTaxable = d.realGain ?? 0;
-        const oldTaxable = d.oldRulesTaxable ?? 0;
-        const gap = Math.abs(newTaxable - oldTaxable);
+        const newTax = d.taxNew ?? 0;
+        const oldTax = d.taxOld ?? 0;
+        const gap = Math.abs(newTax - oldTax);
         let comparison;
-        if (gap < 1) comparison = 'Both regimes tax the same amount';
-        else if (newTaxable < oldTaxable) comparison = `New rules taxes less by ${fmt(gap)}`;
-        else comparison = `Old rules taxes less by ${fmt(gap)}`;
+        if (gap < 1) comparison = 'Both regimes tax about the same';
+        else if (newTax > oldTax) comparison = `New rules taxes more by ${fmt(gap)}`;
+        else comparison = `Old rules taxes more by ${fmt(gap)}`;
         return (
           <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, fontStyle: 'italic', color: C.textSecondary }}>
             {comparison}
@@ -1974,12 +1968,7 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
         title="Gain anatomy under new rules"
         subtitle={
           <>
-            <div>Cost base sits as a thin reference slab at the bottom. Indexation uplift + real gain stack above. The yellow real gain layer is what new rules tax.</div>
-            {showOverlay && (
-              <div style={{ marginTop: 2 }}>
-                Coral overlay = old rules taxable amount (50% of nominal gain). Compare its size to the yellow real gain — the larger region is the regime that taxes more.
-              </div>
-            )}
+            <div>Cost base sits as a thin reference slab at the bottom. Indexation uplift + real gain stack above. The rose-tinted <em>Tax under new rules</em> layer is the actual tax owed. When the old rules overlay is on, the dashed coral line shows tax under old rules — if it sits above the rose, new rules taxes more; if below, old rules taxes more.</div>
             {costBaseLabel && (
               <div style={{ fontFamily: FONT_MONO, marginTop: 2, color: C.textSecondary }}>
                 {costBaseLabel}
@@ -2027,7 +2016,7 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
                 { value: 'Tax under new rules', type: 'rect', color: C.anatomyRealGainTax },
                 { value: 'Sale price', type: 'line', color: C.anatomySalePrice },
                 ...(showOverlay
-                  ? [{ value: 'Old rules taxable (50% × nominal gain)', type: 'rect', color: C.oldRules }]
+                  ? [{ value: 'Tax under old rules (dashed)', type: 'line', color: C.oldRules }]
                   : []),
               ]}
               formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
@@ -2039,36 +2028,20 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
             <Area type="monotone" dataKey="realGainTax" stackId="anatomy" stroke="none" fill={C.anatomyRealGainTax} fillOpacity={0.95} isAnimationActive={false} name="Tax under new rules" />
             <Line type="monotone" dataKey="salePrice" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Sale price" />
             {showOverlay && (
-              <>
-                {/* Coral region: from (cost base + 50% of nominal gain) up to sale price */}
-                <Area type="monotone" dataKey="oldRulesOverlayBase" stackId="overlay" stroke="none" fill="transparent" isAnimationActive={false} activeDot={false} legendType="none" />
-                <Area type="monotone" dataKey="oldRulesOverlayGap" stackId="overlay" stroke={C.oldRules} strokeWidth={1} fill={C.oldRules} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="Old rules taxable (50% × nominal gain)" />
-              </>
+              <Line
+                type="monotone"
+                dataKey="oldRulesAfterTaxY"
+                stroke={C.oldRules}
+                strokeWidth={1.5}
+                strokeDasharray="5 3"
+                dot={false}
+                isAnimationActive={false}
+                connectNulls={false}
+                name="Tax under old rules (dashed)"
+              />
             )}
             {/* Paint after data so the marker stays on top */}
             <CutoffReference data={data} label="1 July 2027 — new rules commence" />
-            {/* TEMPORARY DIAGNOSTIC: bright red control marker at the
-                chart's third sale year. If THIS doesn't render, the
-                problem is with how ReferenceLine integrates with this
-                chart, not with CutoffReference. If it DOES render,
-                the issue is inside CutoffReference (likely the x value
-                returned by cutoffXLabel doesn't match Recharts'
-                expectation for category axes here). */}
-            {data.length >= 3 && (
-              <ReferenceLine
-                x={data[2].xLabel}
-                stroke="#FF0000"
-                strokeWidth={5}
-                strokeOpacity={1}
-                isFront={true}
-                label={{
-                  value: `DEBUG ${data[2].xLabel} (type ${typeof data[2].xLabel})`,
-                  fontSize: 10,
-                  fill: '#FF0000',
-                  position: 'top',
-                }}
-              />
-            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
