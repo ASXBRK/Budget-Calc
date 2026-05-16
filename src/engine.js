@@ -697,7 +697,8 @@ function runBucketB(args) {
       afterTax,
       totalGain: nominalGain,
       preGain,
-      postGain: postPortionTaxable,
+      postGainRaw: Math.max(0, salePrice - value2027),
+      postPortionTaxable,
       diff,
       afterTaxOld: oldRules.afterTaxProceeds,
     }),
@@ -907,10 +908,10 @@ function buildHeadlineBucketA({ saleDate, afterTax }) {
   return `Selling this asset in ${y} produces ${fmtAUD(afterTax)} after tax under the current 50% discount rules.`;
 }
 
-function buildHeadlineBucketB({ saleDate, afterTax, totalGain, preGain, postGain, diff, afterTaxOld }) {
+function buildHeadlineBucketB({ saleDate, afterTax, totalGain, preGain, postGainRaw, postPortionTaxable, diff, afterTaxOld }) {
   const y = toDate(saleDate).getFullYear();
   const moreOrLess = diff >= 0 ? 'more' : 'less';
-  return `Selling in ${y} produces ${fmtAUD(afterTax)} after tax. Of the ${fmtAUD(totalGain)} gain, ${fmtAUD(preGain)} is taxed at the 50% discount and ${fmtAUD(postGain)} under indexation + 30% min. That's ${fmtAUD(Math.abs(diff))} ${moreOrLess} than the ${fmtAUD(afterTaxOld)} you'd receive if the old rules applied to the whole gain.`;
+  return `Selling in ${y} produces ${fmtAUD(afterTax)} after tax. Of the ${fmtAUD(totalGain)} total gain: ${fmtAUD(preGain)} accrued before 1 July 2027 (50% discount applies). ${fmtAUD(postGainRaw)} accrued after — after indexation, ${fmtAUD(postPortionTaxable)} is taxable under the new rules (marginal rate, 30% minimum). That's ${fmtAUD(Math.abs(diff))} ${moreOrLess} than the ${fmtAUD(afterTaxOld)} you'd receive if the old rules applied to the whole gain.`;
 }
 
 function buildHeadlineBucketC({ saleDate, afterTax, indexedCb, realGain, effectiveRate }) {

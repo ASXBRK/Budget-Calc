@@ -700,7 +700,7 @@ const DEFAULT_INPUTS = {
   asset_type: 'shares',
   purchase_date: today.toISOString().slice(0, 10),
   purchase_price: 100000,
-  acquisition_costs: 500,
+  acquisition_costs: 0,
   capital_improvements: 0,
   depreciation_claimed: 0,
   sale_costs: 0,
@@ -824,6 +824,12 @@ export default function App() {
         const newStart = new Date(LEG.newRulesStart);
         const yearsPost = Math.max((saleDate - newStart) / MS_PER_YEAR, 0);
         const inflFactor = Math.pow(1 + (inputs.inflation || 0), yearsPost);
+        // For Bucket B (purchase pre-2027, sale post-2027) the engine uses
+        // value_2027 (CAGR-projected to commencement) as the post-2027 cost
+        // base for indexation. The anatomy must use the same value so the
+        // "real gain" layer matches the engine's postPortionTaxable — if we
+        // index the original cost base instead, the chart can show large real
+        // gain while the engine reports $0 taxable.
         let cbForAnatomy;
         if (isPreCgt) {
           if (saleDate >= newStart) {
@@ -834,6 +840,9 @@ export default function App() {
             // gain", not a hypothetical 100% real-gain stack.
             cbForAnatomy = Math.round(sp);
           }
+        } else if (r.split?.value2027 != null && r.split.value2027 > 0) {
+          // Bucket B / D split: engine's deemed value at 1 Jul 2027.
+          cbForAnatomy = r.split.value2027;
         } else {
           cbForAnatomy = costBase;
         }
@@ -865,6 +874,11 @@ export default function App() {
           gainTotal,
           oldRulesTaxable,
           oldRulesThreshold,
+          // Coral overlay region: spans from threshold up to sale price.
+          // Stacked via two areas with their own stackId: a transparent base
+          // at `oldRulesThreshold`, plus a coral gap = oldRulesTaxable.
+          oldRulesOverlayBase: oldRulesThreshold,
+          oldRulesOverlayGap: oldRulesTaxable,
           taxOld,
           taxNew,
           taxDiff: taxNew - taxOld,
@@ -874,8 +888,15 @@ export default function App() {
       }
     };
 
-    const startYear = pd.getFullYear() + 1;
-    const endYear = pd.getFullYear() + Math.max(1, Math.round(inputs.focus_years));
+    // For old assets, start the visible chart in 2026 (one year before
+    // commencement) rather than purchaseYear+1, so the user can always see
+    // the regime change. Pre-2026 history is collapsed and called out above
+    // the chart card.
+    const earlyCutoff = new Date('2026-07-01T00:00:00+10:00');
+    const useTrimmedStart = pd < earlyCutoff;
+    const startYear = useTrimmedStart ? 2026 : pd.getFullYear() + 1;
+    const requestedEnd = pd.getFullYear() + Math.max(1, Math.round(inputs.focus_years));
+    const endYear = Math.max(startYear + 1, requestedEnd);
     for (let y = startYear; y <= endYear; y++) {
       const sale = new Date(`${y}-06-30T00:00:00+10:00`);
       const years = Math.max((sale - pd) / MS_PER_YEAR, 0);
@@ -884,6 +905,17 @@ export default function App() {
     }
     return points;
   }, [inputs, costBase, isPreCgt, result.error]);
+
+  // Callout banner for pre-2026 assets (chart x-axis trimmed).
+  const chartCallout = useMemo(() => {
+    const pd = new Date(inputs.purchase_date);
+    const earlyCutoff = new Date('2026-07-01T00:00:00+10:00');
+    if (pd >= earlyCutoff) return null;
+    if (isPreCgt) {
+      return 'Asset acquired pre-20 September 1985 (pre-CGT). Asset was exempt from CGT before 1 July 2027. Cost base resets to market value at 1 July 2027 under the new rules. Chart starts at 2026 — pre-2026 history not shown.';
+    }
+    return `Asset purchased ${fmtDate(inputs.purchase_date)}. Pre-2026 period not shown — old rules applied throughout (effective rate ≈ 50% × your MTR).`;
+  }, [inputs.purchase_date, isPreCgt]);
 
   const verdict = useMemo(() => {
     if (result.error) return null;
@@ -1101,6 +1133,17 @@ export default function App() {
               >
                 <FileText size={13} /> {pdfState === 'idle' ? 'Export PDF' : pdfState === 'rendering' ? 'Preparing…' : 'Generating…'}
               </button>
+            </div>
+          )}
+
+          {showResults && chartCallout && (
+            <div style={{
+              fontSize: 12, color: C.textSecondary, lineHeight: 1.5,
+              borderLeft: `3px solid ${C.chartCutoff}`,
+              background: C.offWhite,
+              padding: '8px 12px',
+            }}>
+              {chartCallout}
             </div>
           )}
 
@@ -1776,7 +1819,10 @@ function PanelHeader({ title, subtitle, right }) {
   );
 }
 
-function CutoffReference({ data, label = '1 Jul 2027' }) {
+// Pass `label` to render a label above the line (Panel 1 only). Panels 2
+// and 3 share the same dashed marker without a label — the user already
+// knows what it means from Panel 1.
+function CutoffReference({ data, label }) {
   const cutoff = cutoffXLabel(data);
   if (cutoff == null) return null;
   return (
@@ -1784,7 +1830,7 @@ function CutoffReference({ data, label = '1 Jul 2027' }) {
       x={cutoff}
       stroke={C.chartCutoff}
       strokeDasharray="3 3"
-      label={{ value: label, fontSize: 10, fill: C.chartCutoff, position: 'top' }}
+      label={label ? { value: label, fontSize: 10, fill: C.chartCutoff, position: 'top' } : undefined}
     />
   );
 }
@@ -1813,12 +1859,26 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
         {row('Indexation uplift', fmt(d.indexationUplift), C.anatomyUplift)}
         {row('New rules taxable (real gain)', fmt(d.realGain), C.anatomyRealGain)}
-        {showOverlay && row('Old rules taxable (50% disc on nominal)', fmt(d.oldRulesTaxable), C.oldRules)}
+        {showOverlay && row('Old rules taxable (50% × nominal)', fmt(d.oldRulesTaxable), C.oldRules)}
       </div>
       <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
         {row('Tax under new rules', `${fmt(d.taxNew)} · ${fmtPct((d.newRate ?? 0) / 100, 1)}`, C.newRules)}
         {row('Tax under old rules', `${fmt(d.taxOld)} · ${fmtPct((d.oldRate ?? 0) / 100, 1)}`, C.oldRules)}
       </div>
+      {showOverlay && (() => {
+        const newTaxable = d.realGain ?? 0;
+        const oldTaxable = d.oldRulesTaxable ?? 0;
+        const gap = Math.abs(newTaxable - oldTaxable);
+        let comparison;
+        if (gap < 1) comparison = 'Both regimes tax the same amount';
+        else if (newTaxable < oldTaxable) comparison = `New rules taxes less by ${fmt(gap)}`;
+        else comparison = `Old rules taxes less by ${fmt(gap)}`;
+        return (
+          <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6, fontStyle: 'italic', color: C.textSecondary }}>
+            {comparison}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1836,7 +1896,12 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
         title="Gain anatomy under new rules"
         subtitle={
           <>
-            <div>Cost base sits as a thin reference slab at the bottom. Indexation uplift + real gain stack above. The real gain layer is what new rules tax.</div>
+            <div>Cost base sits as a thin reference slab at the bottom. Indexation uplift + real gain stack above. The yellow real gain layer is what new rules tax.</div>
+            {showOverlay && (
+              <div style={{ marginTop: 2 }}>
+                Coral overlay = old rules taxable amount (50% of nominal gain). Compare its size to the yellow real gain — the larger region is the regime that taxes more.
+              </div>
+            )}
             {costBaseLabel && (
               <div style={{ fontFamily: FONT_MONO, marginTop: 2, color: C.textSecondary }}>
                 {costBaseLabel}
@@ -1879,14 +1944,18 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               iconType="square"
               formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
             />
-            <CutoffReference data={data} label="New rules commence" />
+            <CutoffReference data={data} label="1 July 2027 — new rules commence" />
             {/* Stack: cost base (bottom slab) + indexation uplift + real gain. Total = sale price. */}
             <Area type="monotone" dataKey="costBase" stackId="anatomy" stroke="none" fill={C.anatomyCostBase} fillOpacity={0.9} isAnimationActive={false} name="Cost base" />
             <Area type="monotone" dataKey="indexationUplift" stackId="anatomy" stroke="none" fill={C.anatomyUplift} fillOpacity={0.7} isAnimationActive={false} name="Indexation uplift" />
             <Area type="monotone" dataKey="realGain" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={0.85} isAnimationActive={false} name="Real gain (taxed)" />
             <Line type="monotone" dataKey="salePrice" stroke={C.anatomySalePrice} strokeWidth={2} dot={false} isAnimationActive={false} name="Sale price" />
             {showOverlay && (
-              <Line type="monotone" dataKey="oldRulesThreshold" stroke={C.oldRules} strokeWidth={2} strokeDasharray="6 4" dot={false} isAnimationActive={false} name="Old rules taxable threshold (above this line is taxed under old rules)" />
+              <>
+                {/* Coral region: from (cost base + 50% of nominal gain) up to sale price */}
+                <Area type="monotone" dataKey="oldRulesOverlayBase" stackId="overlay" stroke="none" fill="transparent" isAnimationActive={false} activeDot={false} legendType="none" />
+                <Area type="monotone" dataKey="oldRulesOverlayGap" stackId="overlay" stroke={C.oldRules} strokeWidth={1} fill={C.oldRules} fillOpacity={0.25} isAnimationActive={false} activeDot={false} name="Old rules taxable (50% × nominal gain)" />
+              </>
             )}
           </ComposedChart>
         </ResponsiveContainer>
@@ -1955,20 +2024,24 @@ function TaxDiffTooltip({ active, payload, label }) {
 // Two solid tax lines (old, new) with a conditional shaded band between them.
 // Band achieved with a transparent base + a coloured gap layer, stacked.
 function DiffPanel({ data, height = 220 }) {
+  // Pre-commencement (sale year < 2027): new rules don't exist yet. Hide the
+  // taxNew line and suppress the band so the panel reads "only old rules
+  // apply here". Post-commencement: both lines + conditional band.
   const points = data.map((d) => {
+    const isPost = d.x >= 2027;
     const oldT = d.taxOld ?? 0;
     const newT = d.taxNew ?? 0;
-    const lo = Math.min(oldT, newT);
-    const gap = Math.abs(newT - oldT);
+    const lo = isPost ? Math.min(oldT, newT) : 0;
+    const gap = isPost ? Math.abs(newT - oldT) : 0;
     const newCostsMore = newT > oldT;
     return {
       x: d.x,
       xLabel: d.xLabel,
       taxOld: oldT,
-      taxNew: newT,
+      taxNew: isPost ? newT : null,
       base: lo,
-      gapRed: newCostsMore ? gap : 0,
-      gapGreen: !newCostsMore ? gap : 0,
+      gapRed: isPost && newCostsMore ? gap : 0,
+      gapGreen: isPost && !newCostsMore ? gap : 0,
     };
   });
   return (
@@ -2040,22 +2113,23 @@ function RateTooltip({ active, payload, label }) {
 }
 
 function RatePanel({ data, height = 220 }) {
-  // Same band trick as DiffPanel: transparent base + one coloured gap layer.
-  // Semantic: new < old = BETTER (emerald); new > old = WORSE (rose).
+  // Same band trick as DiffPanel. Pre-commencement (sale year < 2027): new
+  // rules don't exist, so we hide the new-rate line and the band.
   const points = data.map((d) => {
+    const isPost = d.x >= 2027;
     const oldR = d.oldRate ?? 0;
     const newR = d.newRate ?? 0;
-    const lo = Math.min(oldR, newR);
-    const gap = Math.abs(newR - oldR);
+    const lo = isPost ? Math.min(oldR, newR) : 0;
+    const gap = isPost ? Math.abs(newR - oldR) : 0;
     const newWorse = newR > oldR;
     return {
       x: d.x,
       xLabel: d.xLabel,
       oldRate: oldR,
-      newRate: newR,
+      newRate: isPost ? newR : null,
       base: lo,
-      gapRed: newWorse ? gap : 0,
-      gapGreen: !newWorse ? gap : 0,
+      gapRed: isPost && newWorse ? gap : 0,
+      gapGreen: isPost && !newWorse ? gap : 0,
     };
   });
   return (
