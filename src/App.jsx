@@ -831,10 +831,22 @@ export default function App() {
     }
     const isPreCgtDate = pdRaw < LEG.preCgtCutoff;
     if (isPreCgtDate && (!inputs.value_2027 || inputs.value_2027 <= 0)) {
+      // ATO-formula placeholder: compound the user's specified inflation
+      // rate from purchase year to 2027. Years (not days) as the exponent;
+      // the rate is per-year. Defensive defaults for inflation so a 0%
+      // value still yields purchase_price (no extrapolation), not NaN.
       const yearsTo2027 = Math.max(2027 - py, 1);
-      const seed = (inputs.purchase_price || 100000) * Math.pow(1.06, yearsTo2027);
-      if (Number.isFinite(seed) && seed > 0) {
-        patch.value_2027 = Math.round(seed);
+      const rate = Number.isFinite(inputs.inflation) ? inputs.inflation : 0.025;
+      const basePrice = Number.isFinite(inputs.purchase_price) && inputs.purchase_price > 0
+        ? inputs.purchase_price
+        : 100000;
+      const seedRaw = basePrice * Math.pow(1 + rate, yearsTo2027);
+      if (Number.isFinite(seedRaw) && seedRaw > 0) {
+        // Cap to the documented limit (also enforced by the engine and the
+        // text input). Astronomical seed values from edge cases never reach
+        // state.
+        const cap = INPUT_LIMITS.value_2027.max;
+        patch.value_2027 = Math.min(cap, Math.round(seedRaw));
       }
     }
     if (Object.keys(patch).length > 0) {
@@ -1559,7 +1571,13 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
           {showValue2027ManualInput && (
             <div>
               <Label>Value at 1 July 2027</Label>
-              <NumberInput value={inputs.value_2027} onChange={(v) => update({ value_2027: v })} />
+              <NumberInput
+                value={inputs.value_2027}
+                onChange={(v) => update({ value_2027: v })}
+                min={INPUT_LIMITS.value_2027.min}
+                max={INPUT_LIMITS.value_2027.max}
+                helperText="Min $0, max $100M"
+              />
             </div>
           )}
         </div>
