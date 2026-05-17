@@ -2028,13 +2028,14 @@ function PanelHeader({ title, subtitle, right }) {
 // Pass `label` to render a label above the line (Panel 1 only). Panels 2
 // and 3 share the same dashed marker without a label — the user already
 // knows what it means from Panel 1.
-// Pass `label` to render a label above the line (Panel 1 only). Panels 2
-// and 3 share the same dashed marker without a label.
-//
-// isFront={true} is the Recharts-specific knob that paints ReferenceLine
-// above the data series. Without it the marker renders behind area fills
-// regardless of JSX order.
-function CutoffReference({ data, label }) {
+// Recharts dispatches chart children by element.type — it does NOT
+// recursively introspect wrapper components. A child of type ReferenceLine
+// is rendered; a child of type SomeWrapper that returns a ReferenceLine
+// from its render is silently skipped. So this is a plain helper FUNCTION
+// (not a React component) that returns the ReferenceLine element directly.
+// Call sites use {cutoffReference(data, label)} so the JSX child has
+// type === ReferenceLine and Recharts can dispatch it.
+function cutoffReference(data, label) {
   const cutoff = cutoffXLabel(data);
   if (cutoff == null) return null;
   return (
@@ -2202,7 +2203,7 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               />
             )}
             {/* Paint after data so the marker stays on top */}
-            <CutoffReference data={data} label="1 July 2027 — new rules commence" />
+            {cutoffReference(data, "1 July 2027 — new rules commence")}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -2336,7 +2337,7 @@ function DiffPanel({ data, height = 220 }) {
             <Area type="monotone" dataKey="gapGreen" stackId="band" stroke="none" fill={C.semanticBetter} fillOpacity={0.18} isAnimationActive={false} activeDot={false} />
             <Line type="monotone" dataKey="taxOld" stroke={C.oldRules} strokeWidth={2} dot={false} isAnimationActive={false} name="Old rules tax" />
             <Line type="monotone" dataKey="taxNew" stroke={C.newRules} strokeWidth={2} dot={false} isAnimationActive={false} name="New rules tax" />
-            <CutoffReference data={data} />
+            {cutoffReference(data)}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -2424,7 +2425,7 @@ function RatePanel({ data, height = 220 }) {
             <Area type="monotone" dataKey="gapGreen" stackId="band" stroke="none" fill={C.semanticBetter} fillOpacity={0.18} isAnimationActive={false} activeDot={false} />
             <Line type="monotone" dataKey="oldRate" stroke={C.oldRules} strokeWidth={2} dot={false} isAnimationActive={false} name="Old rules" />
             <Line type="monotone" dataKey="newRate" stroke={C.newRules} strokeWidth={2} dot={false} isAnimationActive={false} name="New rules" />
-            <CutoffReference data={data} />
+            {cutoffReference(data)}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
