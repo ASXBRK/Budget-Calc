@@ -16,7 +16,7 @@ import {
 import { Copy, Link as LinkIcon, X, Settings, Info, Check, FileText } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { runCGTProjection, LEG } from './engine.js';
+import { runCGTProjection, LEG, INPUT_LIMITS } from './engine.js';
 import { DEBUG_SCENARIOS, buildScenarioInputs } from './debugScenarios.js';
 
 // ----------------------------------------------------------------------------
@@ -285,24 +285,50 @@ function Label({ children, info, infoTitle }) {
   );
 }
 
-function NumberInput({ value, onChange, prefix = '$', step = 1, min }) {
+function NumberInput({
+  value, onChange, prefix = '$', step = 1, min, max,
+  helperText, formatCap = (n) => `${prefix}${n.toLocaleString('en-AU')}`,
+}) {
+  const [notice, setNotice] = useState(null);
+  const handle = (raw) => {
+    let v = raw === '' ? 0 : Number(raw);
+    if (!Number.isFinite(v)) v = 0;
+    if (Number.isFinite(max) && v > max) {
+      v = max;
+      setNotice(`Value capped at ${formatCap(max)} — please review`);
+      setTimeout(() => setNotice(null), 4000);
+    }
+    if (Number.isFinite(min) && v < min) v = min;
+    onChange(v);
+  };
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', border: `1px solid ${C.border}`,
-      borderRadius: 8, padding: '6px 10px', background: C.white,
-    }}>
-      {prefix && <span style={{ color: C.textMuted, marginRight: 6, fontSize: 13 }}>{prefix}</span>}
-      <input
-        type="number"
-        value={value === '' ? '' : value}
-        step={step}
-        min={min}
-        onChange={(e) => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
-        style={{
-          border: 'none', outline: 'none', width: '100%', fontSize: 14,
-          fontFamily: FONT_MONO, color: C.textPrimary, background: 'transparent',
-        }}
-      />
+    <div>
+      <div style={{
+        display: 'flex', alignItems: 'center', border: `1px solid ${notice ? C.warning : C.border}`,
+        borderRadius: 8, padding: '6px 10px', background: C.white,
+      }}>
+        {prefix && <span style={{ color: C.textMuted, marginRight: 6, fontSize: 13 }}>{prefix}</span>}
+        <input
+          type="number"
+          value={value === '' ? '' : value}
+          step={step}
+          min={min}
+          max={max}
+          onChange={(e) => handle(e.target.value)}
+          style={{
+            border: 'none', outline: 'none', width: '100%', fontSize: 14,
+            fontFamily: FONT_MONO, color: C.textPrimary, background: 'transparent',
+          }}
+        />
+      </div>
+      {(notice || helperText) && (
+        <div style={{
+          fontSize: 10, marginTop: 4,
+          color: notice ? C.warningText : C.textMuted,
+        }}>
+          {notice || helperText}
+        </div>
+      )}
     </div>
   );
 }
@@ -718,10 +744,13 @@ const SALE_YEAR_SPAN = 25;
 
 function buildCostBase(inputs, isPreCgt) {
   if (isPreCgt) return 0;
+  // Improvements + capital-works depreciation only apply to property; force
+  // zero for non-property so stale form/URL state doesn't leak through.
+  const improvements = inputs.asset_type === 'property' ? (inputs.capital_improvements || 0) : 0;
   const dep = inputs.asset_type === 'property' ? (inputs.depreciation_claimed || 0) : 0;
   return (inputs.purchase_price || 0) +
     (inputs.acquisition_costs || 0) +
-    (inputs.capital_improvements || 0) -
+    improvements -
     dep;
 }
 
@@ -750,7 +779,22 @@ export default function App() {
   useEffect(() => {
     const decoded = decodeState(window.location.search);
     if (Object.keys(decoded).length > 0) {
-      setInputs((s) => ({ ...s, ...decoded }));
+      // Clamp any decoded numeric values to the documented input limits so a
+      // stale or hostile URL can't crash the engine or distort the chart.
+      const clamped = { ...decoded };
+      for (const [key, { min, max }] of Object.entries(INPUT_LIMITS)) {
+        if (clamped[key] != null && Number.isFinite(Number(clamped[key]))) {
+          clamped[key] = Math.min(max, Math.max(min, Number(clamped[key])));
+        }
+      }
+      // Drop capital_improvements / depreciation_claimed inherited from a
+      // stale property scenario when the asset type isn't property.
+      const at = clamped.asset_type ?? DEFAULT_INPUTS.asset_type;
+      if (at !== 'property') {
+        delete clamped.capital_improvements;
+        delete clamped.depreciation_claimed;
+      }
+      setInputs((s) => ({ ...s, ...clamped }));
     }
   }, []);
 
@@ -1313,7 +1357,11 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
             <Label>Asset type</Label>
             <Select
               value={inputs.asset_type}
-              onChange={(v) => update({ asset_type: v })}
+              onChange={(v) => update(
+                v === 'property'
+                  ? { asset_type: v }
+                  : { asset_type: v, capital_improvements: 0, depreciation_claimed: 0 }
+              )}
               options={[
                 { value: 'shares', label: 'Shares / managed funds' },
                 { value: 'property', label: 'Investment property' },
@@ -1336,34 +1384,70 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
               <Label info={PRE_CGT_VALUE_INFO} infoTitle="Market value at 1 July 2027">
                 Market value at 1 July 2027 (estimate)
               </Label>
-              <NumberInput value={inputs.value_2027} onChange={(v) => update({ value_2027: v })} />
+              <NumberInput
+                value={inputs.value_2027}
+                onChange={(v) => update({ value_2027: v })}
+                min={INPUT_LIMITS.value_2027.min}
+                max={INPUT_LIMITS.value_2027.max}
+                helperText="Min $0, max $100M"
+              />
             </div>
           )}
           {!isPreCgt && (
             <>
               <div>
                 <Label>Purchase price</Label>
-                <NumberInput value={inputs.purchase_price} onChange={(v) => update({ purchase_price: v })} />
+                <NumberInput
+                  value={inputs.purchase_price}
+                  onChange={(v) => update({ purchase_price: v })}
+                  min={INPUT_LIMITS.purchase_price.min}
+                  max={INPUT_LIMITS.purchase_price.max}
+                  helperText="Min $1, max $100M"
+                />
               </div>
               {isProperty && (
                 <>
                   <div>
                     <Label>{acqLabel}</Label>
-                    <NumberInput value={inputs.acquisition_costs} onChange={(v) => update({ acquisition_costs: v })} />
+                    <NumberInput
+                      value={inputs.acquisition_costs}
+                      onChange={(v) => update({ acquisition_costs: v })}
+                      min={INPUT_LIMITS.acquisition_costs.min}
+                      max={INPUT_LIMITS.acquisition_costs.max}
+                      helperText="Max $10M"
+                    />
                   </div>
                   <div>
                     <Label>{improvementsLabel}</Label>
-                    <NumberInput value={inputs.capital_improvements} onChange={(v) => update({ capital_improvements: v })} />
+                    <NumberInput
+                      value={inputs.capital_improvements}
+                      onChange={(v) => update({ capital_improvements: v })}
+                      min={INPUT_LIMITS.capital_improvements.min}
+                      max={INPUT_LIMITS.capital_improvements.max}
+                      helperText="Total spent on additions, renovations, or extensions. Max $10M."
+                    />
                   </div>
                   <div>
                     <Label info={CAPITAL_WORKS_INFO} infoTitle="Capital works deductions">
                       Capital works deductions claimed
                     </Label>
-                    <NumberInput value={inputs.depreciation_claimed} onChange={(v) => update({ depreciation_claimed: v })} />
+                    <NumberInput
+                      value={inputs.depreciation_claimed}
+                      onChange={(v) => update({ depreciation_claimed: v })}
+                      min={INPUT_LIMITS.depreciation_claimed.min}
+                      max={INPUT_LIMITS.depreciation_claimed.max}
+                      helperText="Max $10M"
+                    />
                   </div>
                   <div>
                     <Label>Sale costs (agent, conveyancing)</Label>
-                    <NumberInput value={inputs.sale_costs} onChange={(v) => update({ sale_costs: v })} />
+                    <NumberInput
+                      value={inputs.sale_costs}
+                      onChange={(v) => update({ sale_costs: v })}
+                      min={INPUT_LIMITS.sale_costs.min}
+                      max={INPUT_LIMITS.sale_costs.max}
+                      helperText="Max $10M"
+                    />
                   </div>
                 </>
               )}
@@ -1393,20 +1477,22 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
           <div>
             <Label>Annual return rate</Label>
             <Slider
-              value={inputs.return_rate * 100}
+              value={Math.min(50, Math.max(0, inputs.return_rate * 100))}
               onChange={(v) => update({ return_rate: v / 100 })}
-              min={0} max={15} step={0.1}
+              min={0} max={50} step={0.1}
               format={(v) => `${v.toFixed(1)}%`}
             />
+            <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>Max 50% per year</div>
           </div>
           <div>
             <Label>Annual inflation</Label>
             <Slider
-              value={inputs.inflation * 100}
+              value={Math.min(20, Math.max(0, inputs.inflation * 100))}
               onChange={(v) => update({ inflation: v / 100 })}
-              min={0} max={6} step={0.1}
+              min={0} max={20} step={0.1}
               format={(v) => `${v.toFixed(1)}%`}
             />
+            <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>Max 20% per year</div>
           </div>
         </div>
       </Card>
@@ -1416,7 +1502,13 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
             <Label>Other taxable income (drives marginal rate)</Label>
-            <NumberInput value={inputs.other_income} onChange={(v) => update({ other_income: v })} />
+            <NumberInput
+              value={inputs.other_income}
+              onChange={(v) => update({ other_income: v })}
+              min={INPUT_LIMITS.other_income.min}
+              max={INPUT_LIMITS.other_income.max}
+              helperText="Max $5M"
+            />
           </div>
           <div>
             <Label info={INCOME_SUPPORT_INFO} infoTitle="Centrelink income support">
@@ -1575,7 +1667,7 @@ function PdfReport({ inputs, focusScenario, result, chartData, isPreCgt }) {
           costBaseLabel={
             isPreCgt
               ? `Pre-CGT: cost base resets to ${fmt(inputs.value_2027 || 0)} at 1 Jul 2027`
-              : `Cost base: ${fmt(inputs.purchase_price + (inputs.acquisition_costs || 0) + (inputs.capital_improvements || 0) - (inputs.asset_type === 'property' ? (inputs.depreciation_claimed || 0) : 0))}`
+              : `Cost base: ${fmt(buildCostBase(inputs, false))}`
           }
         />
       </div>

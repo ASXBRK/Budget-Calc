@@ -205,8 +205,11 @@ function buildCostBase(inputs) {
     is_pre_cgt = false,
   } = inputs;
   if (is_pre_cgt) return 0;
+  // Capital improvements + capital-works depreciation only apply to property.
+  // Force zero for non-property so stale form/URL state can't leak through.
+  const improvements = asset_type === 'property' ? (capital_improvements || 0) : 0;
   const dep = asset_type === 'property' ? (depreciation_claimed || 0) : 0;
-  return purchase_price + acquisition_costs + capital_improvements - dep;
+  return purchase_price + acquisition_costs + improvements - dep;
 }
 
 // ---------- result builders ----------
@@ -813,9 +816,39 @@ function runBucketD(args) {
 
 // ---------- public entry points ----------
 
+// ---------- input validation limits ----------
+// Defensive clamps to prevent unrealistic values from producing meaningless
+// output. The UI also enforces these on every numeric field; engine-level
+// clamping is belt-and-braces for stale URL state or programmatic callers.
+export const INPUT_LIMITS = Object.freeze({
+  purchase_price:        { min: 1,    max: 100_000_000 },
+  acquisition_costs:     { min: 0,    max:  10_000_000 },
+  capital_improvements:  { min: 0,    max:  10_000_000 },
+  depreciation_claimed:  { min: 0,    max:  10_000_000 },
+  sale_costs:            { min: 0,    max:  10_000_000 },
+  value_2027:            { min: 0,    max: 100_000_000 },
+  return_rate:           { min: 0,    max: 0.50 },
+  inflation:             { min: 0,    max: 0.20 },
+  other_income:          { min: 0,    max:   5_000_000 },
+});
+
+const clamp = (v, lo, hi) => {
+  if (v == null || !Number.isFinite(v)) return lo;
+  return Math.min(hi, Math.max(lo, v));
+};
+
+function clampInputs(inputs) {
+  const out = { ...inputs };
+  for (const [key, { min, max }] of Object.entries(INPUT_LIMITS)) {
+    if (out[key] != null) out[key] = clamp(Number(out[key]), min, max);
+  }
+  return out;
+}
+
 export function runCGTProjection(inputs) {
-  if (inputs.mode === 'old_vs_new') return runOldVsNew(inputs);
-  return runSpecific(inputs);
+  const safe = clampInputs(inputs);
+  if (safe.mode === 'old_vs_new') return runOldVsNew(safe);
+  return runSpecific(safe);
 }
 
 export function runCGTSeries(baseInputs, axisVar, range) {
