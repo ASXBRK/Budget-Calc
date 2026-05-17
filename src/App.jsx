@@ -2046,7 +2046,15 @@ function cutoffReference(data, label) {
       strokeDasharray="5 3"
       ifOverflow="extendDomain"
       isFront={true}
-      label={label ? { value: label, fontSize: 10, fill: C.chartCutoff, position: 'top' } : undefined}
+      label={label ? {
+        value: label,
+        position: 'insideTopRight',
+        angle: -90,
+        fontSize: 10,
+        fill: C.chartCutoff,
+        dy: 6,
+        dx: -4,
+      } : undefined}
     />
   );
 }
@@ -2119,6 +2127,21 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
   // Dynamic Y-axis so the cost base sits as a thin reference slab at the
   // bottom, leaving room for indexation + real gain above.
   const { yMin, yMax } = computeAnatomyYDomain(data);
+
+  // Hint when the post-2027 anatomy (indexation uplift + real gain) is a
+  // small fraction of the visible Y range — usually means the user picked
+  // a sale year just past commencement and would benefit from sliding
+  // further forward to see new-rules behaviour develop.
+  const postHeight = data.reduce((acc, d) => {
+    const h = (d.indexationUplift ?? 0) + (d.realGain ?? 0);
+    return h > acc ? h : acc;
+  }, 0);
+  const totalChartHeight = Math.max(yMax - yMin, 1);
+  // Only show the hint if there IS some post-2027 anatomy to grow into
+  // (otherwise the user is in a pre-commencement-only or pre-CGT-only
+  // scenario where the hint isn't useful).
+  const isUnbalanced =
+    postHeight > 0 && postHeight / totalChartHeight < 0.15;
 
   return (
     <div>
@@ -2207,6 +2230,14 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      {isUnbalanced && (
+        <div style={{
+          fontSize: 11, color: C.textSecondary, fontStyle: 'italic',
+          marginTop: 6, paddingLeft: 4,
+        }}>
+          Tip: slide the sale year forward to see more of the new rules era.
+        </div>
+      )}
     </div>
   );
 }
