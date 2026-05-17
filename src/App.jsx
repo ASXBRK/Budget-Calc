@@ -1057,15 +1057,31 @@ export default function App() {
     const newVal = result.actual?.afterTaxProceeds ?? 0;
     const diff = newVal - oldVal;
     const pct = oldVal > 0 ? Math.abs(diff) / oldVal : 0;
-    if (result.bucket === 'A' && !isPreCgt) {
+
+    // Pre-CGT sale pre-2027 (engine returns bucket='A' for these)
+    if (isPreCgt && result.bucket === 'A') {
+      return {
+        tone: 'good',
+        label: 'Pre-CGT exempt',
+        desc: 'Asset exempt under existing CGT rules.',
+      };
+    }
+    // Pre-CGT sale post-2027 (Bucket D): only the pre-2027 portion is
+    // exempt; the post-2027 portion is taxed under new rules. Run the
+    // standard better/worse comparison and surface the partial-exemption
+    // context in the subtext.
+    if (result.bucket === 'D') {
+      const preCgtSubtext =
+        'Pre-2027 gains exempt; post-2027 gains taxed under new rules (cost base resets to market value at 1 July 2027).';
+      if (pct < 0.05) return { tone: 'warn', label: 'Roughly equal', desc: preCgtSubtext };
+      if (diff > 0) return { tone: 'good', label: 'New rules cheaper', desc: preCgtSubtext };
+      return { tone: 'bad', label: 'New rules costlier', desc: preCgtSubtext };
+    }
+    // Non-pre-CGT sale before commencement
+    if (result.bucket === 'A') {
       return { tone: 'neutral', label: 'Pre-2027 sale', desc: 'Old rules apply.' };
     }
-    if (result.bucket === 'D') {
-      return { tone: 'good', label: 'Pre-CGT exempt', desc: 'Pre-2027 gains exempt.' };
-    }
-    if (isPreCgt && result.bucket === 'A') {
-      return { tone: 'good', label: 'Pre-CGT exempt', desc: 'Exempt under both regimes.' };
-    }
+    // Standard comparison cases (Bucket B and C)
     if (pct < 0.05) return { tone: 'warn', label: 'Within 5%', desc: 'Broadly equivalent outcome.' };
     if (diff > 0) return { tone: 'good', label: 'New rules cheaper', desc: 'New regime preserves more after-tax value.' };
     return { tone: 'bad', label: 'New rules costlier', desc: 'New regime costs more.' };
