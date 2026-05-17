@@ -37,6 +37,7 @@ const C = {
   preCgt: '#10b981',
   // Anatomy panel fills
   anatomyCostBase: '#F1F5F9',      // slate-100 — soft grey
+  anatomyPre2027Gain: '#FED7AA',   // peach-200 — pre-2027 gain (taxed under old rules 50% disc)
   anatomyUplift: '#CCFBF1',        // teal-100 — ties to new rules
   anatomyRealGain: '#FEF3C7',      // amber-100 — "kept after tax" portion of real gain
   anatomyRealGainTax: '#FECDD3',   // rose-200  — "tax under new rules" portion of real gain
@@ -900,37 +901,56 @@ export default function App() {
           sale_date: saleDate.toISOString().slice(0, 10),
           sale_price: Math.round(sp),
         });
-        // Anatomy fields — cost base, indexation uplift, real gain decompose
-        // the asset's value at this sale year under new-rules treatment.
+        // Anatomy decomposition: at every sale year the stack reads
+        //   cost base + pre-2027 gain + indexation uplift + (real gain split)
+        //   = sale price
+        // - cost base: original purchase price (flat across all sale years).
+        //   For pre-CGT, uses value_2027 as a deemed cost base (asset was
+        //   exempt; we show the deemed reset value as the "base").
+        // - pre-2027 gain: the portion accrued before 1 Jul 2027 that's
+        //   taxed under old rules (50% discount). Bucket B post-2027 sale =
+        //   value_2027 - cost. Bucket A pre-2027 sale = full nominal gain.
+        //   Bucket C and pre-CGT = 0.
+        // - indexation uplift / real gain: post-commencement only.
         const newStart = new Date(LEG.newRulesStart);
         const yearsPost = Math.max((saleDate - newStart) / MS_PER_YEAR, 0);
         const inflFactor = Math.pow(1 + (inputs.inflation || 0), yearsPost);
-        // For Bucket B (purchase pre-2027, sale post-2027) the engine uses
-        // value_2027 (CAGR-projected to commencement) as the post-2027 cost
-        // base for indexation. The anatomy must use the same value so the
-        // "real gain" layer matches the engine's postPortionTaxable — if we
-        // index the original cost base instead, the chart can show large real
-        // gain while the engine reports $0 taxable.
+        const saleDatePost = saleDate >= newStart;
+        const spRounded = Math.round(sp);
+
         let cbForAnatomy;
+        let preCommencementGain = 0;
+        let indexationBase;
         if (isPreCgt) {
-          if (saleDate >= newStart) {
-            cbForAnatomy = inputs.value_2027 || 0;
-          } else {
-            // Pre-CGT pre-2027 sale is exempt under both regimes — show the
-            // whole asset value as cost base so anatomy reflects "no taxable
-            // gain", not a hypothetical 100% real-gain stack.
-            cbForAnatomy = Math.round(sp);
-          }
+          // Pre-CGT: deemed cost base = value_2027 throughout the chart.
+          // No pre-2027 gain layer (asset was exempt).
+          cbForAnatomy = inputs.value_2027 || 0;
+          indexationBase = cbForAnatomy;
         } else if (r.split?.value2027 != null && r.split.value2027 > 0) {
-          // Bucket B / D split: engine's deemed value at 1 Jul 2027.
-          cbForAnatomy = r.split.value2027;
-        } else {
+          // Bucket B post-2027 sale: cost base stays at original; the gap
+          // between original and value_2027 is the pre-2027 gain layer;
+          // indexation accrues from value_2027.
           cbForAnatomy = costBase;
+          preCommencementGain = Math.max(0, r.split.value2027 - costBase);
+          indexationBase = r.split.value2027;
+        } else if (!saleDatePost && !isPreCgt) {
+          // Bucket A (non-pre-CGT) pre-2027 sale: full nominal gain is
+          // pre-commencement; no indexation, no real gain layer.
+          cbForAnatomy = costBase;
+          preCommencementGain = Math.max(0, spRounded - costBase);
+          indexationBase = costBase;
+        } else {
+          // Bucket C post-2027 (and any other post-commencement non-split
+          // case): no pre-2027 gain layer; indexation accrues from cost
+          // base directly.
+          cbForAnatomy = costBase;
+          indexationBase = costBase;
         }
-        const indexedCb = cbForAnatomy * inflFactor;
-        const indexationUplift = Math.max(0, indexedCb - cbForAnatomy);
-        const realGain = Math.max(0, Math.round(sp) - indexedCb);
-        const gainTotal = Math.max(0, Math.round(sp) - cbForAnatomy);
+
+        const indexedCb = indexationBase * inflFactor;
+        const indexationUplift = saleDatePost ? Math.max(0, indexedCb - indexationBase) : 0;
+        const realGain = saleDatePost ? Math.max(0, spRounded - indexedCb) : 0;
+        const gainTotal = Math.max(0, spRounded - cbForAnatomy);
         const taxOld = r.oldRules?.taxOnGain ?? 0;
         const taxNew = r.actual?.taxOnGain ?? 0;
         const oldRulesTaxable = r.oldRules?.taxableGain ?? 0;
@@ -938,7 +958,6 @@ export default function App() {
         // the user can see how much of the real gain is actually paid as
         // tax. Only meaningful post-commencement; pre-2027 the whole real
         // gain renders as a single yellow layer (tax sub-layer = 0).
-        const saleDatePost = saleDate >= newStart;
         let taxOnRealGain = 0;
         if (saleDatePost) {
           if (r.split && (r.split.totalTaxable ?? 0) > 0) {
@@ -969,6 +988,7 @@ export default function App() {
           salePrice: Math.round(sp),
           costBase: cbForAnatomy,
           indexedCostBase: indexedCb,
+          preCommencementGain,
           indexationUplift,
           realGain,
           realGainKept,
@@ -977,9 +997,10 @@ export default function App() {
           oldRulesTaxable,
           oldRulesThreshold,
           // Y-position of the "kept after old rules tax" dashed line.
-          // = salePrice - taxOld. Null pre-commencement so the Line skips
-          // those points (connectNulls={false}).
-          oldRulesAfterTaxY: saleDatePost ? Math.max(0, Math.round(sp) - taxOld) : null,
+          // = salePrice - taxOld. Renders across ALL sale years: pre-2027
+          // it shows the actual old-rules tax (which IS what applies);
+          // post-2027 it shows the counterfactual comparison vs new rules.
+          oldRulesAfterTaxY: Math.max(0, spRounded - taxOld),
           taxOld,
           taxNew,
           taxDiff: taxNew - taxOld,
@@ -2057,9 +2078,11 @@ function AnatomyTooltip({ active, payload, label, showOverlay }) {
       {row('Cost base', fmt(d.costBase))}
       {row('Total gain', fmt(d.gainTotal))}
       {/* Anatomy section: only show new-rules-specific rows when new rules apply.
-          The coral overlay row still renders pre-commencement (old rules apply). */}
-      {(isPost || (showOverlay && !isPost)) && (
+          Pre-2027 gain row and the coral overlay row still render pre-
+          commencement (both are old-rules concepts). */}
+      {((d.preCommencementGain ?? 0) > 0 || isPost || (showOverlay && !isPost)) && (
         <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 6, paddingTop: 6 }}>
+          {(d.preCommencementGain ?? 0) > 0 && row('Pre-2027 gain (50% disc)', fmt(d.preCommencementGain), C.anatomyPre2027Gain)}
           {isPost && row('Indexation uplift', fmt(d.indexationUplift), C.anatomyUplift)}
           {isPost && row('New rules taxable (real gain)', fmt(d.realGain), C.anatomyRealGain)}
           {showOverlay && row('Old rules taxable (50% × nominal)', fmt(d.oldRulesTaxable), C.oldRules)}
@@ -2145,6 +2168,9 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               iconType="square"
               payload={[
                 { value: 'Cost base', type: 'rect', color: C.anatomyCostBase },
+                ...(data.some((d) => (d.preCommencementGain ?? 0) > 0)
+                  ? [{ value: 'Pre-2027 gain (50% discount)', type: 'rect', color: C.anatomyPre2027Gain }]
+                  : []),
                 { value: 'Indexation uplift', type: 'rect', color: C.anatomyUplift },
                 { value: 'Kept after tax', type: 'rect', color: C.anatomyRealGain },
                 { value: 'Tax under new rules', type: 'rect', color: C.anatomyRealGainTax },
@@ -2155,8 +2181,9 @@ function AnatomyPanel({ data, height = 340, costBaseLabel }) {
               ]}
               formatter={(value) => <span style={{ fontSize: 11, color: C.textSecondary }}>{value}</span>}
             />
-            {/* Stack: cost base + indexation uplift + (kept after tax + tax under new rules) = sale price. */}
+            {/* Stack: cost base + pre-2027 gain + indexation uplift + (kept + tax) = sale price. */}
             <Area type="monotone" dataKey="costBase" stackId="anatomy" stroke="none" fill={C.anatomyCostBase} fillOpacity={0.9} isAnimationActive={false} name="Cost base" />
+            <Area type="monotone" dataKey="preCommencementGain" stackId="anatomy" stroke="none" fill={C.anatomyPre2027Gain} fillOpacity={0.85} isAnimationActive={false} name="Pre-2027 gain (50% discount)" />
             <Area type="monotone" dataKey="indexationUplift" stackId="anatomy" stroke="none" fill={C.anatomyUplift} fillOpacity={0.7} isAnimationActive={false} name="Indexation uplift" />
             <Area type="monotone" dataKey="realGainKept" stackId="anatomy" stroke="none" fill={C.anatomyRealGain} fillOpacity={0.9} isAnimationActive={false} name="Kept after tax" />
             <Area type="monotone" dataKey="realGainTax" stackId="anatomy" stroke="none" fill={C.anatomyRealGainTax} fillOpacity={0.95} isAnimationActive={false} name="Tax under new rules" />
