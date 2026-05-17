@@ -143,6 +143,7 @@ const KEY_MAP = {
   other_income: 'oi',
   income_support_recipient: 'is',
   value_2027: 'v27',
+  value_2027_manual: 'v27m',
   valuation_method: 'vm',
   focus_years: 'fy',
 };
@@ -152,7 +153,7 @@ const REVERSE_KEY_MAP = Object.fromEntries(
 const STRING_KEYS = new Set([
   'asset_type', 'valuation_method', 'purchase_date',
 ]);
-const BOOLEAN_KEYS = new Set(['income_support_recipient']);
+const BOOLEAN_KEYS = new Set(['income_support_recipient', 'value_2027_manual']);
 
 function encodeState(state) {
   const params = new URLSearchParams();
@@ -727,7 +728,9 @@ const today = new Date();
 const DEFAULT_INPUTS = {
   asset_type: 'shares',
   purchase_date: today.toISOString().slice(0, 10),
-  purchase_price: 100000,
+  // Fresh load: no purchase price entered yet. UI guards on this and
+  // shows an instructional placeholder until the user enters > 0.
+  purchase_price: 0,
   acquisition_costs: 0,
   capital_improvements: 0,
   depreciation_claimed: 0,
@@ -737,6 +740,8 @@ const DEFAULT_INPUTS = {
   other_income: 100000,
   income_support_recipient: false,
   value_2027: 0,
+  // Auto-populate is suppressed once the user manually edits the field.
+  value_2027_manual: false,
   valuation_method: 'ATO_formula',
   focus_years: 10,
 };
@@ -807,53 +812,56 @@ export default function App() {
 
   const update = useCallback((patch) => setInputs((s) => ({ ...s, ...patch })), []);
 
-  // When purchase_date changes, keep focus_years within the slider's valid
-  // range. For old assets the valid window shifts so the previously-stored
-  // focus_years can fall outside the new [min, max]. We also jump to a
-  // sensible default (sale year = max(purchaseYear+10, 2035)) when the
-  // current value would land before commencement.
-  //
-  // For pre-CGT dates: auto-populate a starter value_2027 when missing, so
-  // the chart panels render immediately rather than dropping into the
-  // engine's "awaiting_value_2027" soft state which hides everything. The
-  // user can refine via the Asset-details input.
+  // Tracks whether the auto-populate of value_2027 was capped at $100M on
+  // the most recent recompute. Surfaced as a notice under the input.
+  const [v2027CapNotice, setV2027CapNotice] = useState(false);
+
+  // Side-effect on input changes:
+  // 1. Keep focus_years inside the slider's valid window when purchase_date
+  //    shifts (old asset → wider window; recent asset → narrower).
+  // 2. Auto-populate value_2027 for pre-CGT scenarios when ALL preconditions
+  //    are satisfied (pre-CGT date AND purchase_price > 0 AND inflation > 0
+  //    AND user hasn't manually overridden the field). If the computed
+  //    value would exceed $100M, snap to $100M and flag the notice. If any
+  //    precondition fails, leave value_2027 alone (don't blank it).
   useEffect(() => {
     const pdRaw = new Date(inputs.purchase_date);
     const py = pdRaw.getFullYear();
     if (Number.isNaN(py)) return;
+    const patch = {};
+
+    // 1) Focus-years clamp
     const minF = Math.max(1, 2026 - py);
     const maxF = Math.max(25, 2050 - py);
-    const cur = inputs.focus_years;
-    const patch = {};
-    if (cur < minF || cur > maxF) {
+    if (inputs.focus_years < minF || inputs.focus_years > maxF) {
       const defaultSaleYear = Math.max(py + 10, 2035);
       patch.focus_years = Math.min(maxF, Math.max(minF, defaultSaleYear - py));
     }
+
+    // 2) Pre-CGT auto-populate of value_2027
     const isPreCgtDate = pdRaw < LEG.preCgtCutoff;
-    if (isPreCgtDate && (!inputs.value_2027 || inputs.value_2027 <= 0)) {
-      // ATO-formula placeholder: compound the user's specified inflation
-      // rate from purchase year to 2027. Years (not days) as the exponent;
-      // the rate is per-year. Defensive defaults for inflation so a 0%
-      // value still yields purchase_price (no extrapolation), not NaN.
+    const price = Number.isFinite(inputs.purchase_price) ? inputs.purchase_price : 0;
+    const rate = Number.isFinite(inputs.inflation) ? inputs.inflation : 0;
+    const manuallyEdited = !!inputs.value_2027_manual;
+    if (isPreCgtDate && price > 0 && rate > 0 && !manuallyEdited) {
       const yearsTo2027 = Math.max(2027 - py, 1);
-      const rate = Number.isFinite(inputs.inflation) ? inputs.inflation : 0.025;
-      const basePrice = Number.isFinite(inputs.purchase_price) && inputs.purchase_price > 0
-        ? inputs.purchase_price
-        : 100000;
-      const seedRaw = basePrice * Math.pow(1 + rate, yearsTo2027);
+      const seedRaw = price * Math.pow(1 + rate, yearsTo2027);
+      const cap = INPUT_LIMITS.value_2027.max;
       if (Number.isFinite(seedRaw) && seedRaw > 0) {
-        // Cap to the documented limit (also enforced by the engine and the
-        // text input). Astronomical seed values from edge cases never reach
-        // state.
-        const cap = INPUT_LIMITS.value_2027.max;
-        patch.value_2027 = Math.min(cap, Math.round(seedRaw));
+        const exceedsCap = seedRaw > cap;
+        patch.value_2027 = exceedsCap ? cap : Math.round(seedRaw);
+        setV2027CapNotice(exceedsCap);
       }
+    } else {
+      // Conditions not met → clear the cap notice but leave value_2027 as-is.
+      setV2027CapNotice(false);
     }
+
     if (Object.keys(patch).length > 0) {
       setInputs((s) => ({ ...s, ...patch }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputs.purchase_date]);
+  }, [inputs.purchase_date, inputs.purchase_price, inputs.inflation]);
 
   const isPreCgt = useMemo(() => {
     if (!inputs.purchase_date) return false;
@@ -1172,7 +1180,13 @@ export default function App() {
   }, [pdfState]);
 
   const awaitingValue = result.result === 'awaiting_value_2027';
-  const showResults = !result.error && !awaitingValue;
+  // Useful inputs check: a pre-CGT scenario needs value_2027; everything
+  // else needs purchase_price. Without one of those the chart is just
+  // zeros and meaningless, so we render an instructional placeholder.
+  const hasUsefulInputs = isPreCgt
+    ? (inputs.value_2027 ?? 0) > 0
+    : (inputs.purchase_price ?? 0) > 0;
+  const showResults = !result.error && !awaitingValue && hasUsefulInputs;
 
   return (
     <>
@@ -1231,11 +1245,23 @@ export default function App() {
       }}>
         {/* Left column: inputs */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <UnifiedInputs inputs={inputs} update={update} isPreCgt={isPreCgt} />
+          <UnifiedInputs inputs={inputs} update={update} isPreCgt={isPreCgt} v2027CapNotice={v2027CapNotice} />
         </div>
 
         {/* Right column: results */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {!result.error && !awaitingValue && !hasUsefulInputs && (
+            <Card style={{ padding: 32, textAlign: 'center' }}>
+              <div style={{ fontFamily: FONT_HEAD, fontSize: 16, fontWeight: 700, color: C.textPrimary, marginBottom: 6 }}>
+                Enter purchase details to begin
+              </div>
+              <div style={{ fontSize: 13, color: C.textSecondary, lineHeight: 1.5 }}>
+                {isPreCgt
+                  ? 'Enter a market value at 1 July 2027 in Asset details to model this pre-CGT asset.'
+                  : 'Enter a purchase price (cost base) in Asset details to model this asset.'}
+              </div>
+            </Card>
+          )}
           {showResults && result.bucket && (
             <>
               <TimelineStrip
@@ -1377,7 +1403,7 @@ export default function App() {
 // Unified input panel
 // ----------------------------------------------------------------------------
 
-function UnifiedInputs({ inputs, update, isPreCgt }) {
+function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
   const purchase = new Date(inputs.purchase_date);
   // Valuation toggle relevant if non-pre-CGT and purchase straddles 1 Jul 2027
   // for at least one chart point — i.e. purchase < cutoff (chart extends 25y forward).
@@ -1435,10 +1461,14 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
               </Label>
               <NumberInput
                 value={inputs.value_2027}
-                onChange={(v) => update({ value_2027: v })}
+                onChange={(v) => update({ value_2027: v, value_2027_manual: v > 0 })}
                 min={INPUT_LIMITS.value_2027.min}
                 max={INPUT_LIMITS.value_2027.max}
-                helperText="Min $0, max $100M"
+                helperText={
+                  v2027CapNotice
+                    ? 'ATO formula estimate exceeds cap. Manual valuation recommended.'
+                    : 'Min $0, max $100M'
+                }
               />
             </div>
           )}
@@ -1589,7 +1619,7 @@ function UnifiedInputs({ inputs, update, isPreCgt }) {
               <Label>Value at 1 July 2027</Label>
               <NumberInput
                 value={inputs.value_2027}
-                onChange={(v) => update({ value_2027: v })}
+                onChange={(v) => update({ value_2027: v, value_2027_manual: v > 0 })}
                 min={INPUT_LIMITS.value_2027.min}
                 max={INPUT_LIMITS.value_2027.max}
                 helperText="Min $0, max $100M"
