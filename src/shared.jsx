@@ -104,6 +104,27 @@ export const fmtDate = (d) => {
 };
 
 // ----------------------------------------------------------------------------
+// Date validation
+// ----------------------------------------------------------------------------
+
+export const MIN_PURCHASE_DATE = new Date('1900-01-01T00:00:00+10:00');
+export const MAX_PURCHASE_DATE = (() => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + 5);
+  return d;
+})();
+
+export const MAX_PURCHASE_DATE_STR = MAX_PURCHASE_DATE.toISOString().slice(0, 10);
+
+export function isValidPurchaseDate(s) {
+  if (typeof s !== 'string') return false;
+  const d = new Date(s);
+  if (!(d instanceof Date) || isNaN(d.getTime())) return false;
+  if (d < MIN_PURCHASE_DATE || d > MAX_PURCHASE_DATE) return false;
+  return true;
+}
+
+// ----------------------------------------------------------------------------
 // Atoms
 // ----------------------------------------------------------------------------
 

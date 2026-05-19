@@ -8,7 +8,7 @@ import {
   HIDE_SPINNERS, MS_PER_YEAR,
   Card, fmt, fmtDate, pillButton,
   DEFAULT_INPUTS, buildCostBase, derivedSalePrice,
-  explainerForScenario,
+  explainerForScenario, isValidPurchaseDate,
 } from './shared.jsx';
 import { UnifiedInputs } from './inputs.jsx';
 import { DiffPanel, ProceedsPanel, RatePanel } from './charts.jsx';
@@ -75,8 +75,13 @@ function decodeState(search) {
       out[longKey] = value;
     } else {
       const num = Number(value);
-      out[longKey] = Number.isFinite(num) ? num : value;
+      // Drop non-finite numerics so they fall back to DEFAULT_INPUTS.
+      if (Number.isFinite(num)) out[longKey] = num;
     }
+  }
+  // Drop malformed / out-of-range purchase dates so they fall back to default.
+  if (out.purchase_date != null && !isValidPurchaseDate(out.purchase_date)) {
+    delete out.purchase_date;
   }
   return out;
 }
@@ -208,6 +213,9 @@ export default function App() {
   const chartData = useMemo(() => {
     if (result.error) return [];
     const pd = new Date(inputs.purchase_date);
+    // Final safety check: a bad date that slipped past earlier guards would
+    // produce NaN x-values and crash Recharts. Bail with an empty series.
+    if (isNaN(pd.getTime())) return [];
     const points = [];
 
     const buildPoint = (saleDate, years, xValue, xLabel) => {
@@ -267,7 +275,14 @@ export default function App() {
       const p = buildPoint(sale, years, y, y);
       if (p) points.push(p);
     }
-    return points;
+    // Drop any point with non-finite values — Recharts treats NaN as a normal
+    // y-coordinate and crashes during layout.
+    return points.filter((p) =>
+      Number.isFinite(p.x)
+      && Number.isFinite(p.taxOld)
+      && Number.isFinite(p.afterTaxOld)
+      && Number.isFinite(p.rateOld)
+    );
   }, [inputs, costBase, isPreCgt, result.error]);
 
   const chartCallout = useMemo(() => {

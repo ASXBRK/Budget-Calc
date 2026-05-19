@@ -4,6 +4,7 @@ import {
   C, FONT_BODY, FONT_MONO,
   Card, CardHeader, Label,
   PRE_CGT_VALUE_INFO, INCOME_SUPPORT_INFO, VALUATION_INFO, CAPITAL_WORKS_INFO,
+  MAX_PURCHASE_DATE_STR, isValidPurchaseDate,
 } from './shared.jsx';
 
 export function NumberInput({
@@ -59,7 +60,14 @@ export function DateInput({ value, onChange }) {
     <input
       type="date"
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      min="1900-01-01"
+      max={MAX_PURCHASE_DATE_STR}
+      onChange={(e) => {
+        // Silently reject malformed/out-of-range dates. The browser allows
+        // pasting or typing past min/max in some configurations; this is the
+        // last line of UI defence before state.
+        if (isValidPurchaseDate(e.target.value)) onChange(e.target.value);
+      }}
       style={{
         border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 10px',
         fontSize: 13, fontFamily: FONT_BODY, color: C.textPrimary, background: C.white,

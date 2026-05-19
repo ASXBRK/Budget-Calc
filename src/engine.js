@@ -846,6 +846,22 @@ function clampInputs(inputs) {
 }
 
 export function runCGTProjection(inputs) {
+  // Defensive date validation: a malformed date string in inputs would
+  // propagate as NaN through every downstream calculation and crash the
+  // chart layer. Return a structured error instead so the UI can show a
+  // graceful message.
+  if (inputs?.purchase_date != null) {
+    const pd = new Date(inputs.purchase_date);
+    if (isNaN(pd.getTime())) {
+      return { error: 'Invalid purchase date', bucket: null };
+    }
+  }
+  if (inputs?.sale_date != null) {
+    const sd = new Date(inputs.sale_date);
+    if (isNaN(sd.getTime())) {
+      return { error: 'Invalid sale date', bucket: null };
+    }
+  }
   const safe = clampInputs(inputs);
   if (safe.mode === 'old_vs_new') return runOldVsNew(safe);
   return runSpecific(safe);
