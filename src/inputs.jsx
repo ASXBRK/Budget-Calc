@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LEG, INPUT_LIMITS } from './engine.js';
 import {
   C, FONT_BODY, FONT_MONO,
@@ -56,30 +56,37 @@ export function NumberInput({
 }
 
 export function DateInput({ value, onChange }) {
-  // HTML min/max attributes block keyboard entry of older years (e.g. 1985)
-  // in some browsers — they're omitted on purpose. Validation runs in JS
-  // on change, with a transient notice for out-of-range values.
+  // Blur-validation: user types freely, validation runs only when the field
+  // loses focus. Invalid blur reverts local state to the last parent-
+  // accepted value. Avoids fighting the keyboard mid-edit for old years.
+  const [localValue, setLocalValue] = useState(value);
   const [notice, setNotice] = useState(null);
-  const handle = (raw) => {
-    if (!raw) {
-      onChange(raw);
-      setNotice(null);
-      return;
-    }
-    if (isValidPurchaseDate(raw)) {
-      onChange(raw);
-      setNotice(null);
-    } else {
-      setNotice('Date must be between 1900 and 5 years from now');
-      setTimeout(() => setNotice(null), 4000);
-    }
-  };
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
   return (
     <div>
       <input
         type="date"
-        value={value}
-        onChange={(e) => handle(e.target.value)}
+        value={localValue}
+        onChange={(e) => setLocalValue(e.target.value)}
+        onBlur={() => {
+          if (!localValue) {
+            onChange(localValue);
+            setNotice(null);
+            return;
+          }
+          if (isValidPurchaseDate(localValue)) {
+            onChange(localValue);
+            setNotice(null);
+          } else {
+            setLocalValue(value);
+            setNotice('Date must be between 1900 and 5 years from now. Reverted.');
+            setTimeout(() => setNotice(null), 4000);
+          }
+        }}
         style={{
           border: `1px solid ${notice ? C.warning : C.border}`, borderRadius: 8, padding: '6px 10px',
           fontSize: 13, fontFamily: FONT_BODY, color: C.textPrimary, background: C.white,
