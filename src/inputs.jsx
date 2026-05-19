@@ -295,22 +295,22 @@ export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
           <div>
             <Label>Annual return rate</Label>
             <Slider
-              value={Math.min(50, Math.max(0, inputs.return_rate * 100))}
+              value={Math.min(25, Math.max(0, inputs.return_rate * 100))}
               onChange={(v) => update({ return_rate: v / 100 })}
-              min={0} max={50} step={0.1}
+              min={0} max={25} step={0.1}
               format={(v) => `${v.toFixed(1)}%`}
             />
-            <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>Max 50% per year</div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>Max 25% per year</div>
           </div>
           <div>
             <Label>Annual inflation</Label>
             <Slider
-              value={Math.min(20, Math.max(0, inputs.inflation * 100))}
+              value={Math.min(10, Math.max(0, inputs.inflation * 100))}
               onChange={(v) => update({ inflation: v / 100 })}
-              min={0} max={20} step={0.1}
+              min={0} max={10} step={0.1}
               format={(v) => `${v.toFixed(1)}%`}
             />
-            <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>Max 20% per year</div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4 }}>Max 10% per year</div>
           </div>
         </div>
       </Card>

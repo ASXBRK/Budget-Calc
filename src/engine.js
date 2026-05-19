@@ -827,8 +827,8 @@ export const INPUT_LIMITS = Object.freeze({
   depreciation_claimed:  { min: 0,    max:  10_000_000 },
   sale_costs:            { min: 0,    max:  10_000_000 },
   value_2027:            { min: 0,    max: 100_000_000 },
-  return_rate:           { min: 0,    max: 0.50 },
-  inflation:             { min: 0,    max: 0.20 },
+  return_rate:           { min: 0,    max: 0.25 },
+  inflation:             { min: 0,    max: 0.10 },
   other_income:          { min: 0,    max:   5_000_000 },
 });
 
