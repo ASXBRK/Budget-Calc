@@ -160,20 +160,22 @@ function ComparisonTooltip({ active, payload, label, type }) {
 
 function buildBandPoints(data, oldKey, newKey, betterWhen) {
   return data.map((d) => {
-    const isPost = d.x >= 2027;
     const oldV = d[oldKey] ?? 0;
-    const newV = d[newKey] ?? 0;
-    const lo = isPost ? Math.min(oldV, newV) : 0;
-    const gap = isPost ? Math.abs(newV - oldV) : 0;
-    const newBetter = betterWhen === 'higher' ? newV > oldV : newV < oldV;
+    const newV = d[newKey];
+    // null new value (pre-commencement sale years) → no band, no new line.
+    // Recharts breaks the line at null by default, which is what we want.
+    const hasNew = newV != null;
+    const lo = hasNew ? Math.min(oldV, newV) : 0;
+    const gap = hasNew ? Math.abs(newV - oldV) : 0;
+    const newBetter = hasNew && (betterWhen === 'higher' ? newV > oldV : newV < oldV);
     return {
       x: d.x,
       xLabel: d.xLabel,
       [oldKey]: oldV,
-      [newKey]: isPost ? newV : null,
+      [newKey]: hasNew ? newV : null,
       base: lo,
-      gapGreen: isPost && newBetter ? gap : 0,
-      gapRed: isPost && !newBetter && gap > 0 ? gap : 0,
+      gapGreen: hasNew && newBetter ? gap : 0,
+      gapRed: hasNew && !newBetter && gap > 0 ? gap : 0,
     };
   });
 }

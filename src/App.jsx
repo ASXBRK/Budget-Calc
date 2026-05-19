@@ -257,7 +257,12 @@ export default function App() {
     const requestedEnd = pd.getFullYear() + Math.max(1, Math.round(inputs.focus_years));
     const endYear = Math.max(startYear + 1, requestedEnd);
     for (let y = startYear; y <= endYear; y++) {
-      const sale = new Date(`${y}-06-30T00:00:00+10:00`);
+      // Use the commencement date itself for the 2027 tick so the engine
+      // computes the new rules treatment (Bucket B) at the boundary rather
+      // than Bucket A. Other years use 30 June (end of FY).
+      const sale = y === 2027
+        ? new Date('2027-07-01T00:00:00+10:00')
+        : new Date(`${y}-06-30T00:00:00+10:00`);
       const years = Math.max((sale - pd) / MS_PER_YEAR, 0);
       const p = buildPoint(sale, years, y, y);
       if (p) points.push(p);
