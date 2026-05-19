@@ -386,10 +386,7 @@ export default function App() {
   }, [pdfState]);
 
   const awaitingValue = result.result === 'awaiting_value_2027';
-  const hasUsefulInputs = isPreCgt
-    ? (inputs.value_2027 ?? 0) > 0
-    : (inputs.purchase_price ?? 0) > 0;
-  const showResults = !result.error && !awaitingValue && hasUsefulInputs;
+  const showResults = !result.error && !awaitingValue;
 
   return (
     <>
@@ -451,18 +448,6 @@ export default function App() {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {!result.error && !awaitingValue && !hasUsefulInputs && (
-            <Card style={{ padding: 32, textAlign: 'center' }}>
-              <div style={{ fontFamily: FONT_HEAD, fontSize: 16, fontWeight: 700, color: C.textPrimary, marginBottom: 6 }}>
-                Enter purchase details to begin
-              </div>
-              <div style={{ fontSize: 13, color: C.textSecondary, lineHeight: 1.5 }}>
-                {isPreCgt
-                  ? 'Enter a market value at 1 July 2027 in Asset details to model this pre-CGT asset.'
-                  : 'Enter a purchase price (cost base) in Asset details to model this asset.'}
-              </div>
-            </Card>
-          )}
           {showResults && result.bucket && (
             <>
               <TimelineStrip

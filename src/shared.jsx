@@ -217,7 +217,7 @@ const today = new Date();
 export const DEFAULT_INPUTS = {
   asset_type: 'shares',
   purchase_date: today.toISOString().slice(0, 10),
-  purchase_price: 0,
+  purchase_price: 100000,
   acquisition_costs: 0,
   capital_improvements: 0,
   depreciation_claimed: 0,
