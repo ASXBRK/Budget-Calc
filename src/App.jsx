@@ -15,7 +15,7 @@ import { DiffPanel, ProceedsPanel, RatePanel } from './charts.jsx';
 import { ParamsModal, AssumptionsModal } from './modals.jsx';
 import { TimelineStrip, SummaryCards, AssetTypeFootnote } from './timeline.jsx';
 import { PdfReport } from './pdf.jsx';
-import { DebugTable } from './debug.jsx';
+import { DebugTable, ScenarioDebugPanel } from './debug.jsx';
 
 // ----------------------------------------------------------------------------
 // URL state
@@ -103,6 +103,12 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem('cgtDebugVisible', debugVisible ? '1' : '0'); } catch {}
   }, [debugVisible]);
+  const [scenarioDebugVisible, setScenarioDebugVisible] = useState(() => {
+    try { return localStorage.getItem('cgtScenarioDebugVisible') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('cgtScenarioDebugVisible', scenarioDebugVisible ? '1' : '0'); } catch {}
+  }, [scenarioDebugVisible]);
 
   useEffect(() => {
     const decoded = decodeState(window.location.search);
@@ -553,17 +559,42 @@ export default function App() {
 
       {/* Debug scenarios — engine verification, not in PDF export */}
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 20px 24px' }}>
-        <button
-          onClick={() => setDebugVisible((v) => !v)}
-          style={{
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            color: C.textSubtle, fontSize: 11, fontFamily: FONT_BODY,
-            padding: '6px 0', textDecoration: 'underline dotted', textUnderlineOffset: 3,
-          }}
-        >
-          {debugVisible ? 'Hide debug scenarios' : 'Show debug scenarios'}
-        </button>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+          <button
+            onClick={() => setDebugVisible((v) => !v)}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: C.textSubtle, fontSize: 11, fontFamily: FONT_BODY,
+              padding: '6px 0', textDecoration: 'underline dotted', textUnderlineOffset: 3,
+            }}
+          >
+            {debugVisible ? 'Hide debug scenarios' : 'Show debug scenarios'}
+          </button>
+          {showResults && (
+            <button
+              onClick={() => setScenarioDebugVisible((v) => !v)}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: C.textSubtle, fontSize: 11, fontFamily: FONT_BODY,
+                padding: '6px 0', textDecoration: 'underline dotted', textUnderlineOffset: 3,
+              }}
+            >
+              {scenarioDebugVisible ? 'Hide scenario debug' : 'Show scenario debug'}
+            </button>
+          )}
+        </div>
         {debugVisible && <DebugTable />}
+        {scenarioDebugVisible && showResults && (
+          <ScenarioDebugPanel
+            inputs={inputs}
+            focusScenario={focusScenario}
+            result={result}
+            chartData={chartData}
+            isPreCgt={isPreCgt}
+            costBase={costBase}
+            verdict={verdict}
+          />
+        )}
       </div>
 
       {paramsOpen && <ParamsModal onClose={() => setParamsOpen(false)} />}
