@@ -240,8 +240,12 @@ export function derivedSalePrice(inputs, saleDate) {
   const returnRate = inputs.return_rate || 0;
   const sd = saleDate instanceof Date ? saleDate : toDate(saleDate);
   if (isPreCgt) {
-    const yearsPost = Math.max(yearsBetween(LEG.newRulesStart, sd), 0);
-    return (inputs.value_2027 || 0) * Math.pow(1 + returnRate, yearsPost);
+    // Pre-CGT: extrapolate from the 1 Jul 2027 market value along the same
+    // growth curve in both directions. Pre-2027 sales reverse-CAGR back
+    // from value_2027 (negative exponent), so the chart shows a smoothly
+    // growing curve rather than flatlining at value_2027 before 2027.
+    const yearsRelative = yearsBetween(LEG.newRulesStart, sd);
+    return (inputs.value_2027 || 0) * Math.pow(1 + returnRate, yearsRelative);
   }
   const pd = toDate(inputs.purchase_date);
   const yearsHeld = Math.max(yearsBetween(pd, sd), 0);
@@ -379,7 +383,6 @@ function runSpecific(inputs) {
     inflation = 0,
     other_income,
     income_support_recipient = false,
-    valuation_method = 'ATO_formula',
     value_2027: userValue2027,
   } = inputs;
 
@@ -481,7 +484,6 @@ function runSpecific(inputs) {
     otherIncome: other_income,
     incomeSupport: income_support_recipient,
     fy,
-    valuationMethod: valuation_method,
     userValue2027,
   });
 }
@@ -623,17 +625,19 @@ function runBucketB(args) {
     otherIncome,
     incomeSupport,
     fy,
-    valuationMethod,
-    userValue2027,
   } = args;
 
   const yearsToCutoff = Math.max(yearsBetween(purchaseDate, LEG.newRulesStart), 0);
   const yearsPost = Math.max(totalYears - yearsToCutoff, 0);
 
+  // value_2027 always derives from the CAGR between purchase and sale —
+  // the manual override toggle has been removed. For pre-CGT (Bucket D)
+  // scenarios the user-entered value_2027 is consumed directly by
+  // runBucketD; for Bucket B the projection-derived value is correct
+  // because both salePrice and value_2027 grow off the same market-value
+  // curve.
   let value2027;
-  if (valuationMethod === 'use_entered_value' && userValue2027 != null && userValue2027 > 0) {
-    value2027 = userValue2027;
-  } else {
+  {
     // CAGR derived from MARKET VALUE at purchase, not cost base. Depreciation
     // reduces cost base but not the underlying asset value, so using cost
     // base here understates value_2027 for depreciated property.

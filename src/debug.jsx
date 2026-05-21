@@ -47,9 +47,6 @@ export function DebugTable() {
       `at ${i.asset_type}`,
     ];
     if (i.is_pre_cgt) parts.push(`pre-CGT, v27 ${fmt(i.value_2027)}`);
-    if (!i.is_pre_cgt && new Date(i.purchase_date) < LEG.newRulesStart && new Date(i.sale_date) >= LEG.newRulesStart) {
-      parts.push(`vm ${i.valuation_method}`);
-    }
     return parts.join(' · ');
   };
 
@@ -168,10 +165,7 @@ function buildDebugText({ inputs, focusScenario, result, chartData, isPreCgt, co
       lines.push(`Sale costs: ${fmt(inputs.sale_costs)}`);
     }
   } else {
-    lines.push(`Purchase price (legacy): ${fmt(inputs.purchase_price)}`);
     lines.push(`Market value at 1 Jul 2027: ${fmt(inputs.value_2027)}`);
-    lines.push(`Manual override: ${inputs.value_2027_manual ? 'yes' : 'no (auto-formula)'}`);
-    lines.push(`Valuation method: ${inputs.valuation_method}`);
   }
   lines.push(`Cost base (computed): ${fmt(costBase)}`);
   lines.push(`Annual return: ${fmtPct(inputs.return_rate, 2)}`);

@@ -3,7 +3,7 @@ import { LEG, INPUT_LIMITS } from './engine.js';
 import {
   C, FONT_BODY, FONT_MONO,
   Card, CardHeader, Label,
-  PRE_CGT_VALUE_INFO, INCOME_SUPPORT_INFO, VALUATION_INFO, CAPITAL_WORKS_INFO,
+  PRE_CGT_VALUE_INFO, INCOME_SUPPORT_INFO, CAPITAL_WORKS_INFO,
   isValidPurchaseDate,
 } from './shared.jsx';
 
@@ -181,8 +181,6 @@ export function Toggle({ value, onChange, options, disabled }) {
 
 export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
   const purchase = new Date(inputs.purchase_date);
-  const showValuationToggle = !isPreCgt && purchase < LEG.newRulesStart;
-  const showValue2027ManualInput = showValuationToggle && inputs.valuation_method === 'use_entered_value';
   const isProperty = inputs.asset_type === 'property';
   const purchaseYear = purchase.getFullYear();
   // Slider range, decoupled from purchase date for old assets so the user
@@ -229,7 +227,7 @@ export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
           {isPreCgt && (
             <div>
               <Label info={PRE_CGT_VALUE_INFO} infoTitle="Market value at 1 July 2027">
-                Market value at 1 July 2027 (estimate)
+                Market value at 1 July 2027
               </Label>
               <NumberInput
                 value={inputs.value_2027}
@@ -238,8 +236,8 @@ export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
                 max={INPUT_LIMITS.value_2027.max}
                 helperText={
                   v2027CapNotice
-                    ? 'ATO formula estimate exceeds cap. Manual valuation recommended.'
-                    : 'Min $0, max $100M'
+                    ? 'Estimate exceeds cap. Use a manual valuation.'
+                    : 'For property, use a professional valuation; for shares, the closing price on 30 June 2027 once known.'
                 }
               />
             </div>
@@ -371,33 +369,6 @@ export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
               options={[{ value: false, label: 'No' }, { value: true, label: 'Yes' }]}
             />
           </div>
-          {showValuationToggle && (
-            <div>
-              <Label info={VALUATION_INFO} infoTitle="Valuation method">
-                Valuation at 1 July 2027
-              </Label>
-              <Toggle
-                value={inputs.valuation_method}
-                onChange={(v) => update({ valuation_method: v })}
-                options={[
-                  { value: 'ATO_formula', label: 'ATO formula' },
-                  { value: 'use_entered_value', label: 'Enter value' },
-                ]}
-              />
-            </div>
-          )}
-          {showValue2027ManualInput && (
-            <div>
-              <Label>Value at 1 July 2027</Label>
-              <NumberInput
-                value={inputs.value_2027}
-                onChange={(v) => update({ value_2027: v, value_2027_manual: v > 0 })}
-                min={INPUT_LIMITS.value_2027.min}
-                max={INPUT_LIMITS.value_2027.max}
-                helperText="Min $0, max $100M"
-              />
-            </div>
-          )}
         </div>
       </Card>
     </>

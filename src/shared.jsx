@@ -69,8 +69,6 @@ export const PRE_CGT_VALUE_INFO = "Pre-1985 assets are exempt under existing CGT
 
 export const INCOME_SUPPORT_INFO = 'Affects the new-rules calculation only: removes the 30% minimum tax floor on the gain. Per the 2026 Budget, recipients of Centrelink income support (Age Pension, JobSeeker, Disability Support Pension, Parenting Payment, etc.) pay their marginal rate without the minimum top-up. This only changes the outcome when the marginal rate on the gain would otherwise be below 30% — for clients whose income places them at or above the 30% bracket, toggling Yes has no visible effect.';
 
-export const VALUATION_INFO = "For an asset bought before 1 July 2027 and sold after, the value at 1 July 2027 splits the gain into pre and post portions. ATO formula estimates this using compound growth from purchase to sale. Use 'Enter value' if you have a real market valuation at that date.";
-
 export const CAPITAL_WORKS_INFO = "Division 43 capital works deductions claimed over the holding period reduce the cost base for CGT purposes. If you've claimed $10,000 of building depreciation, enter $10,000 here. Don't include plant & equipment (Div 40) — that's separate and may not affect cost base if acquired after May 2017.";
 
 // ----------------------------------------------------------------------------
@@ -249,7 +247,6 @@ export const DEFAULT_INPUTS = {
   income_support_recipient: false,
   value_2027: 0,
   value_2027_manual: false,
-  valuation_method: 'ATO_formula',
   focus_years: 10,
 };
 

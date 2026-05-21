@@ -35,13 +35,12 @@ const KEY_MAP = {
   income_support_recipient: 'is',
   value_2027: 'v27',
   value_2027_manual: 'v27m',
-  valuation_method: 'vm',
   focus_years: 'fy',
 };
 const REVERSE_KEY_MAP = Object.fromEntries(
   Object.entries(KEY_MAP).map(([k, v]) => [v, k])
 );
-const STRING_KEYS = new Set(['asset_type', 'valuation_method', 'purchase_date']);
+const STRING_KEYS = new Set(['asset_type', 'purchase_date']);
 const BOOLEAN_KEYS = new Set(['income_support_recipient', 'value_2027_manual']);
 
 function encodeState(state) {
