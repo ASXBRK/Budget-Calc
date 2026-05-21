@@ -247,7 +247,11 @@ function buildDebugText({ inputs, focusScenario, result, chartData, isPreCgt, co
     lines.push(`  Years post-commencement: ${Number(s.yearsPost).toFixed(2)}`);
     lines.push(`  Pre-2027 nominal gain: ${fmt(s.preGain)}`);
     lines.push(`  Pre-2027 taxable (50% disc): ${fmt(s.prePortionTaxable)}`);
-    lines.push(`  Post-2027 nominal gain: ${fmt(s.postGain)}`);
+    // Nominal post-gain = salePrice − value_2027 (before indexation). The
+    // engine's `split.postGain` field happens to alias postPortionTaxable
+    // (post-indexation taxable amount) — surface the true nominal here.
+    const postNominal = Math.max(0, (focusScenario.sale_price || 0) - (s.value2027 || 0));
+    lines.push(`  Post-2027 nominal gain: ${fmt(postNominal)}`);
     lines.push(`  Post-2027 indexed value at 2027: ${fmt(s.indexedValue2027)}`);
     lines.push(`  Post-2027 taxable (real): ${fmt(s.postPortionTaxable)}`);
     lines.push(`  Total taxable: ${fmt(s.totalTaxable)}`);

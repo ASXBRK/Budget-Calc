@@ -212,6 +212,42 @@ function buildCostBase(inputs) {
   return purchase_price + acquisition_costs + improvements - dep;
 }
 
+// Market value of the asset at purchase, used as the growth basis for
+// projecting sale prices and the 1 Jul 2027 value. Distinct from cost base:
+// depreciation reduces the tax cost base but does NOT reduce market value
+// (a property that has been depreciated is still worth what the market
+// pays for it). Improvements are treated as if made at purchase — a
+// documented simplification.
+export function buildAssetValueAtPurchase(inputs) {
+  const {
+    purchase_price = 0,
+    capital_improvements = 0,
+    asset_type = 'shares',
+  } = inputs;
+  const improvements = asset_type === 'property' ? (capital_improvements || 0) : 0;
+  return (purchase_price || 0) + improvements;
+}
+
+// Sale price projection. Pre-CGT scenarios extrapolate from value_2027
+// forward over the post-commencement years; everything else grows from
+// market value at purchase. Cost base is intentionally NOT the growth
+// basis — see buildAssetValueAtPurchase.
+export function derivedSalePrice(inputs, saleDate) {
+  const isPreCgt =
+    inputs.is_pre_cgt != null
+      ? inputs.is_pre_cgt
+      : (inputs.purchase_date && toDate(inputs.purchase_date) < LEG.preCgtCutoff);
+  const returnRate = inputs.return_rate || 0;
+  const sd = saleDate instanceof Date ? saleDate : toDate(saleDate);
+  if (isPreCgt) {
+    const yearsPost = Math.max(yearsBetween(LEG.newRulesStart, sd), 0);
+    return (inputs.value_2027 || 0) * Math.pow(1 + returnRate, yearsPost);
+  }
+  const pd = toDate(inputs.purchase_date);
+  const yearsHeld = Math.max(yearsBetween(pd, sd), 0);
+  return buildAssetValueAtPurchase(inputs) * Math.pow(1 + returnRate, yearsHeld);
+}
+
 // ---------- result builders ----------
 
 function makeRegimeResult(salePrice, costBasePaid, regime) {
@@ -598,12 +634,15 @@ function runBucketB(args) {
   if (valuationMethod === 'use_entered_value' && userValue2027 != null && userValue2027 > 0) {
     value2027 = userValue2027;
   } else {
-    // compound CAGR over the whole hold
+    // CAGR derived from MARKET VALUE at purchase, not cost base. Depreciation
+    // reduces cost base but not the underlying asset value, so using cost
+    // base here understates value_2027 for depreciated property.
+    const avap = buildAssetValueAtPurchase(inputs);
     const cagr =
-      totalYears > 0 && costBase > 0
-        ? Math.pow(salePrice / costBase, 1 / totalYears) - 1
+      totalYears > 0 && avap > 0
+        ? Math.pow(salePrice / avap, 1 / totalYears) - 1
         : 0;
-    value2027 = costBase * Math.pow(1 + cagr, yearsToCutoff);
+    value2027 = avap * Math.pow(1 + cagr, yearsToCutoff);
   }
 
   // Pre-2027 portion: 50% discount (total holding > 12 months assumed for split)
@@ -880,7 +919,7 @@ export function runCGTSeries(baseInputs, axisVar, range) {
       const purchaseDate = toDate(baseInputs.purchase_date);
       const years = Math.max(yearsBetween(purchaseDate, saleDate), 0);
       const growth = baseInputs.growth_rate ?? 0.06;
-      const baseCb = buildCostBase(baseInputs);
+      const avap = buildAssetValueAtPurchase(baseInputs);
       const derivedSalePrice =
         baseInputs.sale_price_derive === false
           ? baseInputs.sale_price
@@ -891,7 +930,7 @@ export function runCGTSeries(baseInputs, axisVar, range) {
                   1 + growth,
                   Math.max(yearsBetween(LEG.newRulesStart, saleDate), 0)
                 )
-              : baseCb * Math.pow(1 + growth, years));
+              : avap * Math.pow(1 + growth, years));
       results.push(
         runCGTProjection({
           ...baseInputs,

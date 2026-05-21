@@ -193,13 +193,7 @@ export default function App() {
     const pd = new Date(inputs.purchase_date);
     const sale = new Date(pd);
     sale.setFullYear(pd.getFullYear() + Math.round(inputs.focus_years));
-    const sp = derivedSalePrice({
-      inputs,
-      isPreCgt,
-      saleDate: sale,
-      costBase,
-      yearsFromPurchase: inputs.focus_years,
-    });
+    const sp = derivedSalePrice({ inputs, isPreCgt, saleDate: sale });
     return {
       ...inputs,
       mode: 'specific',
@@ -225,13 +219,7 @@ export default function App() {
     const points = [];
 
     const buildPoint = (saleDate, years, xValue, xLabel) => {
-      const sp = derivedSalePrice({
-        inputs,
-        isPreCgt,
-        saleDate,
-        costBase,
-        yearsFromPurchase: years,
-      });
+      const sp = derivedSalePrice({ inputs, isPreCgt, saleDate });
       try {
         const r = runCGTProjection({
           ...inputs,

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { runCGTProjection, marginalTax, fyForDate, determineBucket, medicareLevy, LEG } from './engine.js';
+import {
+  runCGTProjection, marginalTax, fyForDate, determineBucket, medicareLevy, LEG,
+  buildAssetValueAtPurchase, derivedSalePrice,
+} from './engine.js';
 
 function near(a, b, pct = 0.01) {
   if (b === 0) return Math.abs(a) <= 1;
@@ -203,5 +206,115 @@ describe('Edge cases', () => {
 
   it('LEG constants are frozen', () => {
     expect(Object.isFrozen(LEG)).toBe(true);
+  });
+});
+
+describe('Sale-price growth basis (depreciation does not reduce market value)', () => {
+  // Each test derives sale price via the engine helper and runs the
+  // projection end-to-end so we verify both the UI-facing derivation and
+  // the engine's downstream value_2027 calculation.
+
+  it('T1: property with depreciation, no improvements', () => {
+    const inputs = {
+      mode: 'specific',
+      asset_type: 'property',
+      purchase_date: '2020-01-01',
+      sale_date: '2035-01-01',
+      purchase_price: 500_000,
+      capital_improvements: 0,
+      depreciation_claimed: 100_000,
+      return_rate: 0.05,
+      inflation: 0.025,
+      other_income: 150_000,
+      valuation_method: 'ATO_formula',
+    };
+    expect(buildAssetValueAtPurchase(inputs)).toBe(500_000);
+    const sp = derivedSalePrice(inputs, inputs.sale_date);
+    expect(near(sp, 1_039_464, 0.001)).toBe(true);
+    const r = runCGTProjection({ ...inputs, sale_price: Math.round(sp) });
+    expect(r.bucket).toBe('B');
+    expect(near(r.costBase, 400_000, 0.001)).toBe(true);
+    expect(near(r.nominalGain, 639_464, 0.001)).toBe(true);
+    expect(near(r.split.value2027, 720_752, 0.005)).toBe(true);
+  });
+
+  it('T2: property with improvements, no depreciation (no regression)', () => {
+    const inputs = {
+      mode: 'specific',
+      asset_type: 'property',
+      purchase_date: '2020-01-01',
+      sale_date: '2035-01-01',
+      purchase_price: 500_000,
+      capital_improvements: 200_000,
+      depreciation_claimed: 0,
+      return_rate: 0.05,
+      inflation: 0.025,
+      other_income: 150_000,
+    };
+    expect(buildAssetValueAtPurchase(inputs)).toBe(700_000);
+    const sp = derivedSalePrice(inputs, inputs.sale_date);
+    expect(near(sp, 1_455_251, 0.001)).toBe(true);
+    const r = runCGTProjection({ ...inputs, sale_price: Math.round(sp) });
+    expect(near(r.costBase, 700_000, 0.001)).toBe(true);
+  });
+
+  it('T3: property with both improvements and depreciation', () => {
+    const inputs = {
+      mode: 'specific',
+      asset_type: 'property',
+      purchase_date: '2020-01-01',
+      sale_date: '2035-01-01',
+      purchase_price: 500_000,
+      capital_improvements: 200_000,
+      depreciation_claimed: 100_000,
+      return_rate: 0.05,
+      inflation: 0.025,
+      other_income: 150_000,
+    };
+    expect(buildAssetValueAtPurchase(inputs)).toBe(700_000);
+    const sp = derivedSalePrice(inputs, inputs.sale_date);
+    expect(near(sp, 1_455_251, 0.001)).toBe(true);
+    const r = runCGTProjection({ ...inputs, sale_price: Math.round(sp) });
+    expect(near(r.costBase, 600_000, 0.001)).toBe(true);
+    expect(near(r.nominalGain, 855_251, 0.001)).toBe(true);
+  });
+
+  it('T4: shares (no regression — depreciation/improvements ignored for non-property)', () => {
+    const inputs = {
+      mode: 'specific',
+      asset_type: 'shares',
+      purchase_date: '2022-01-01',
+      sale_date: '2026-01-01',
+      purchase_price: 100_000,
+      return_rate: 0.07,
+      inflation: 0.025,
+      other_income: 100_000,
+    };
+    expect(buildAssetValueAtPurchase(inputs)).toBe(100_000);
+    const sp = derivedSalePrice(inputs, inputs.sale_date);
+    expect(near(sp, 131_080, 0.001)).toBe(true);
+  });
+
+  it('T5: Bucket B 50-year hold with depreciation', () => {
+    const inputs = {
+      mode: 'specific',
+      asset_type: 'property',
+      purchase_date: '1990-06-01',
+      sale_date: '2040-06-01',
+      purchase_price: 200_000,
+      capital_improvements: 0,
+      depreciation_claimed: 100_000,
+      return_rate: 0.06,
+      inflation: 0.03,
+      other_income: 150_000,
+      valuation_method: 'ATO_formula',
+    };
+    expect(buildAssetValueAtPurchase(inputs)).toBe(200_000);
+    const sp = derivedSalePrice(inputs, inputs.sale_date);
+    expect(near(sp, 3_684_030, 0.001)).toBe(true);
+    const r = runCGTProjection({ ...inputs, sale_price: Math.round(sp) });
+    expect(r.bucket).toBe('B');
+    expect(near(r.costBase, 100_000, 0.001)).toBe(true);
+    expect(near(r.split.value2027, 1_735_518, 0.005)).toBe(true);
   });
 });

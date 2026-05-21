@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Info } from 'lucide-react';
-import { LEG } from './engine.js';
+import { LEG, derivedSalePrice as engineDerivedSalePrice } from './engine.js';
 
 // ----------------------------------------------------------------------------
 // Design tokens
@@ -263,10 +263,9 @@ export function buildCostBase(inputs, isPreCgt) {
     dep;
 }
 
-export function derivedSalePrice({ inputs, isPreCgt, saleDate, costBase, yearsFromPurchase }) {
-  if (isPreCgt) {
-    const yearsPost = Math.max((saleDate - new Date(LEG.newRulesStart)) / MS_PER_YEAR, 0);
-    return (inputs.value_2027 || 0) * Math.pow(1 + inputs.return_rate, yearsPost);
-  }
-  return costBase * Math.pow(1 + inputs.return_rate, yearsFromPurchase);
+// Thin wrapper around the engine's domain helper so App.jsx keeps its
+// existing call site. Cost base is intentionally NOT the growth basis —
+// see engine.buildAssetValueAtPurchase for why.
+export function derivedSalePrice({ inputs, isPreCgt, saleDate }) {
+  return engineDerivedSalePrice({ ...inputs, is_pre_cgt: isPreCgt }, saleDate);
 }
