@@ -182,6 +182,12 @@ export function Toggle({ value, onChange, options, disabled }) {
 export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
   const purchase = new Date(inputs.purchase_date);
   const isProperty = inputs.asset_type === 'property';
+  // value_2027 estimation/manual UX state (pre-CGT only)
+  const pricePresent = (inputs.purchase_price ?? 0) > 0;
+  const isManualV2027 = !!inputs.value_2027_manual;
+  const canEstimate = isPreCgt && pricePresent && (inputs.return_rate ?? 0) > 0;
+  const showEstimateNote = canEstimate && !isManualV2027 && !v2027CapNotice;
+  const showManualNote = isPreCgt && isManualV2027;
   const purchaseYear = purchase.getFullYear();
   // Slider range, decoupled from purchase date for old assets so the user
   // can always reach post-commencement sale dates.
@@ -227,6 +233,16 @@ export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
           {isPreCgt && (
             <>
               <div>
+                <Label>Original purchase price</Label>
+                <NumberInput
+                  value={inputs.purchase_price}
+                  onChange={(v) => update({ purchase_price: v })}
+                  min={0}
+                  max={INPUT_LIMITS.purchase_price.max}
+                  helperText="Optional — used only to estimate the 1 July 2027 market value below; does not affect tax."
+                />
+              </div>
+              <div>
                 <Label info={PRE_CGT_VALUE_INFO} infoTitle="Market value at 1 July 2027">
                   Market value at 1 July 2027
                 </Label>
@@ -238,9 +254,35 @@ export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
                   helperText={
                     v2027CapNotice
                       ? 'Estimate exceeds cap. Use a manual valuation.'
-                      : 'For property, use a professional valuation; for shares, the closing price on 30 June 2027 once known.'
+                      : (canEstimate || isManualV2027)
+                        ? null
+                        : 'For property, use a professional valuation; for shares, the closing price on 30 June 2027 once known.'
                   }
                 />
+                {showEstimateNote && (
+                  <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4, lineHeight: 1.4 }}>
+                    Estimated from your purchase price and annual return rate. Replace with a professional valuation if available.
+                  </div>
+                )}
+                {showManualNote && (
+                  <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4, lineHeight: 1.4 }}>
+                    Manual value entered.{' '}
+                    {pricePresent && (
+                      <button
+                        type="button"
+                        onClick={() => update({ value_2027_manual: false })}
+                        style={{
+                          background: 'transparent', border: 'none', padding: 0,
+                          color: C.teal, cursor: 'pointer', fontSize: 10,
+                          fontFamily: FONT_BODY,
+                          textDecoration: 'underline', textUnderlineOffset: 2,
+                        }}
+                      >
+                        Reset to estimate
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
               {isProperty && (
                 <>

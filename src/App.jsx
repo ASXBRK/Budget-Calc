@@ -157,7 +157,10 @@ export default function App() {
 
     const isPreCgtDate = pdRaw < LEG.preCgtCutoff;
     const price = Number.isFinite(inputs.purchase_price) ? inputs.purchase_price : 0;
-    const rate = Number.isFinite(inputs.inflation) ? inputs.inflation : 0;
+    // Auto-seed uses the user's nominal return rate as the backward growth
+    // assumption — inflation alone (~2.5%) badly underestimates property /
+    // share growth over decades.
+    const rate = Number.isFinite(inputs.return_rate) ? inputs.return_rate : 0;
     const manuallyEdited = !!inputs.value_2027_manual;
     if (isPreCgtDate && price > 0 && rate > 0 && !manuallyEdited) {
       const yearsTo2027 = Math.max(2027 - py, 1);
@@ -176,7 +179,7 @@ export default function App() {
       setInputs((s) => ({ ...s, ...patch }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputs.purchase_date, inputs.purchase_price, inputs.inflation]);
+  }, [inputs.purchase_date, inputs.purchase_price, inputs.return_rate, inputs.value_2027_manual]);
 
   const isPreCgt = useMemo(() => {
     if (!inputs.purchase_date) return false;
