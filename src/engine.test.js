@@ -317,4 +317,38 @@ describe('Sale-price growth basis (depreciation does not reduce market value)', 
     expect(near(r.costBase, 100_000, 0.001)).toBe(true);
     expect(near(r.split.value2027, 1_735_518, 0.005)).toBe(true);
   });
+
+  it('T6: pre-CGT property — post-2027 improvements + depreciation feed cost base + growth', () => {
+    const inputs = {
+      mode: 'specific',
+      asset_type: 'property',
+      purchase_date: '1980-01-01',
+      sale_date: '2035-07-01', // 8 years post-cutoff
+      value_2027: 1_000_000,
+      capital_improvements: 200_000,
+      depreciation_claimed: 50_000,
+      return_rate: 0.05,
+      inflation: 0.025,
+      other_income: 150_000,
+    };
+
+    // Growth basis post-2027 = value_2027 + improvements; depreciation does
+    // not reduce market value. Pre-2027 sale dates use value_2027 alone.
+    const spPost = derivedSalePrice(inputs, '2035-07-01');
+    expect(near(spPost, 1_200_000 * Math.pow(1.05, 8), 0.001)).toBe(true);
+    const spPre = derivedSalePrice(inputs, '2026-01-01');
+    // Reverse-CAGR from value_2027 only (improvements haven't happened yet)
+    expect(near(spPre, 1_000_000 * Math.pow(1.05, -1.5), 0.005)).toBe(true);
+
+    const r = runCGTProjection({ ...inputs, sale_price: Math.round(spPost) });
+    expect(r.bucket).toBe('D');
+    // Effective cost base = 1_000_000 + 200_000 − 50_000 = 1_150_000
+    expect(near(r.costBase, 1_150_000, 0.001)).toBe(true);
+    // Pre-2027 portion stays exempt under Bucket D
+    expect(r.oldRules.taxOnGain).toBe(0);
+    // newRules.indexedCostBase = effectiveCostBase × (1+inflation)^yearsPost
+    expect(
+      near(r.newRules.indexedCostBase, 1_150_000 * Math.pow(1.025, 8), 0.005)
+    ).toBe(true);
+  });
 });

@@ -225,22 +225,66 @@ export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
             )}
           </div>
           {isPreCgt && (
-            <div>
-              <Label info={PRE_CGT_VALUE_INFO} infoTitle="Market value at 1 July 2027">
-                Market value at 1 July 2027
-              </Label>
-              <NumberInput
-                value={inputs.value_2027}
-                onChange={(v) => update({ value_2027: v, value_2027_manual: v > 0 })}
-                min={INPUT_LIMITS.value_2027.min}
-                max={INPUT_LIMITS.value_2027.max}
-                helperText={
-                  v2027CapNotice
-                    ? 'Estimate exceeds cap. Use a manual valuation.'
-                    : 'For property, use a professional valuation; for shares, the closing price on 30 June 2027 once known.'
-                }
-              />
-            </div>
+            <>
+              <div>
+                <Label info={PRE_CGT_VALUE_INFO} infoTitle="Market value at 1 July 2027">
+                  Market value at 1 July 2027
+                </Label>
+                <NumberInput
+                  value={inputs.value_2027}
+                  onChange={(v) => update({ value_2027: v, value_2027_manual: v > 0 })}
+                  min={INPUT_LIMITS.value_2027.min}
+                  max={INPUT_LIMITS.value_2027.max}
+                  helperText={
+                    v2027CapNotice
+                      ? 'Estimate exceeds cap. Use a manual valuation.'
+                      : 'For property, use a professional valuation; for shares, the closing price on 30 June 2027 once known.'
+                  }
+                />
+              </div>
+              {isProperty && (
+                <>
+                  <div style={{
+                    fontSize: 11, color: C.textMuted, lineHeight: 1.5,
+                    padding: '4px 0 2px',
+                  }}>
+                    For pre-CGT assets, only events after the 1 July 2027 deemed acquisition affect the cost base — earlier history is already reflected in the market value above.
+                  </div>
+                  <div>
+                    <Label>Capital improvements (after 1 July 2027)</Label>
+                    <NumberInput
+                      value={inputs.capital_improvements}
+                      onChange={(v) => update({ capital_improvements: v })}
+                      min={INPUT_LIMITS.capital_improvements.min}
+                      max={INPUT_LIMITS.capital_improvements.max}
+                      helperText="Total spent on additions, renovations, or extensions after the deemed acquisition. Max $10M."
+                    />
+                  </div>
+                  <div>
+                    <Label info={CAPITAL_WORKS_INFO} infoTitle="Capital works deductions">
+                      Capital works deductions claimed (after 1 July 2027)
+                    </Label>
+                    <NumberInput
+                      value={inputs.depreciation_claimed}
+                      onChange={(v) => update({ depreciation_claimed: v })}
+                      min={INPUT_LIMITS.depreciation_claimed.min}
+                      max={INPUT_LIMITS.depreciation_claimed.max}
+                      helperText="Max $10M"
+                    />
+                  </div>
+                  <div>
+                    <Label>Sale costs (agent, conveyancing)</Label>
+                    <NumberInput
+                      value={inputs.sale_costs}
+                      onChange={(v) => update({ sale_costs: v })}
+                      min={INPUT_LIMITS.sale_costs.min}
+                      max={INPUT_LIMITS.sale_costs.max}
+                      helperText="Max $10M"
+                    />
+                  </div>
+                </>
+              )}
+            </>
           )}
           {!isPreCgt && (
             <>

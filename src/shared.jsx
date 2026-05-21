@@ -251,9 +251,13 @@ export const DEFAULT_INPUTS = {
 };
 
 export function buildCostBase(inputs, isPreCgt) {
-  if (isPreCgt) return 0;
   const improvements = inputs.asset_type === 'property' ? (inputs.capital_improvements || 0) : 0;
   const dep = inputs.asset_type === 'property' ? (inputs.depreciation_claimed || 0) : 0;
+  if (isPreCgt) {
+    // Pre-CGT: deemed cost base = value_2027 ± post-2027 property events.
+    // Pre-1985 history is already reflected in value_2027.
+    return (inputs.value_2027 || 0) + improvements - dep;
+  }
   return (inputs.purchase_price || 0) +
     (inputs.acquisition_costs || 0) +
     improvements -

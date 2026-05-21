@@ -201,14 +201,22 @@ function buildCostBase(inputs) {
     acquisition_costs = 0,
     capital_improvements = 0,
     depreciation_claimed = 0,
+    value_2027 = 0,
     asset_type = 'shares',
     is_pre_cgt = false,
   } = inputs;
-  if (is_pre_cgt) return 0;
   // Capital improvements + capital-works depreciation only apply to property.
   // Force zero for non-property so stale form/URL state can't leak through.
   const improvements = asset_type === 'property' ? (capital_improvements || 0) : 0;
   const dep = asset_type === 'property' ? (depreciation_claimed || 0) : 0;
+  if (is_pre_cgt) {
+    // Pre-CGT scenarios use the 1 Jul 2027 market value as the deemed cost
+    // base. Property improvements/depreciation in the post-2027 window
+    // adjust the deemed base — pre-1985 history is already reflected in
+    // value_2027 so original purchase price and acquisition costs aren't
+    // part of the cost base.
+    return (value_2027 || 0) + improvements - dep;
+  }
   return purchase_price + acquisition_costs + improvements - dep;
 }
 
@@ -244,8 +252,17 @@ export function derivedSalePrice(inputs, saleDate) {
     // growth curve in both directions. Pre-2027 sales reverse-CAGR back
     // from value_2027 (negative exponent), so the chart shows a smoothly
     // growing curve rather than flatlining at value_2027 before 2027.
+    //
+    // Capital improvements on a pre-CGT property are post-2027 events by
+    // definition, so they only feed the growth basis for sale dates at or
+    // after the cutoff.
     const yearsRelative = yearsBetween(LEG.newRulesStart, sd);
-    return (inputs.value_2027 || 0) * Math.pow(1 + returnRate, yearsRelative);
+    const v2027 = inputs.value_2027 || 0;
+    const improvements =
+      yearsRelative > 0 && inputs.asset_type === 'property'
+        ? (inputs.capital_improvements || 0)
+        : 0;
+    return (v2027 + improvements) * Math.pow(1 + returnRate, yearsRelative);
   }
   const pd = toDate(inputs.purchase_date);
   const yearsHeld = Math.max(yearsBetween(pd, sd), 0);
@@ -788,9 +805,19 @@ function runBucketD(args) {
   }
 
   const yearsPost = Math.max(yearsBetween(LEG.newRulesStart, saleDate), 0);
+
+  // Post-2027 events affect the deemed cost base for pre-CGT property:
+  // capital improvements add, capital-works deductions subtract. Same
+  // treatment as Bucket B/C, just operating over the post-2027 window.
+  const propertyImprovements =
+    inputs?.asset_type === 'property' ? (inputs.capital_improvements || 0) : 0;
+  const propertyDepreciation =
+    inputs?.asset_type === 'property' ? (inputs.depreciation_claimed || 0) : 0;
+  const effectiveCostBase = value2027 + propertyImprovements - propertyDepreciation;
+
   const nw = applyNew({
     salePrice,
-    costBase: value2027,
+    costBase: effectiveCostBase,
     holdingYears: yearsPost,
     inflation,
     otherIncome,
@@ -800,7 +827,7 @@ function runBucketD(args) {
 
   // For Bucket D, "newRules" represents the actual post-2027 calculation,
   // since the pre-2027 portion is exempt.
-  const newRules = makeRegimeResult(salePrice, value2027, nw);
+  const newRules = makeRegimeResult(salePrice, effectiveCostBase, nw);
   // No meaningful old-rules counterfactual: pre-1985 assets were exempt under
   // the old regime too. Show zero-tax to make that visible.
   const oldRules = {
@@ -824,8 +851,8 @@ function runBucketD(args) {
     bucket: 'D',
     inputs,
     salePrice,
-    costBase: 0,
-    nominalGain: salePrice,
+    costBase: effectiveCostBase,
+    nominalGain: Math.max(0, salePrice - effectiveCostBase),
     holdingYears: yearsPost,
     purchaseDate,
     saleDate,

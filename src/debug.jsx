@@ -166,6 +166,11 @@ function buildDebugText({ inputs, focusScenario, result, chartData, isPreCgt, co
     }
   } else {
     lines.push(`Market value at 1 Jul 2027: ${fmt(inputs.value_2027)}`);
+    if (inputs.asset_type === 'property') {
+      lines.push(`Capital improvements (post-2027): ${fmt(inputs.capital_improvements)}`);
+      lines.push(`Capital works deductions (post-2027): ${fmt(inputs.depreciation_claimed)}`);
+      lines.push(`Sale costs: ${fmt(inputs.sale_costs)}`);
+    }
   }
   lines.push(`Cost base (computed): ${fmt(costBase)}`);
   lines.push(`Annual return: ${fmtPct(inputs.return_rate, 2)}`);
