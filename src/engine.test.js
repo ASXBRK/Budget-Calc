@@ -352,3 +352,48 @@ describe('Sale-price growth basis (depreciation does not reduce market value)', 
     ).toBe(true);
   });
 });
+
+describe('12-month CGT discount threshold (day count, not 365.25)', () => {
+  // Bucket A scenario base — sale before 1 Jul 2027 so old-rules treatment
+  // is the only one that applies and we can read taxable gain directly.
+  const base = {
+    mode: 'specific',
+    asset_type: 'shares',
+    purchase_price: 100_000,
+    sale_price: 110_000, // $10k nominal gain
+    inflation: 0.025,
+    other_income: 100_000,
+  };
+
+  it('sale exactly 12 calendar months after purchase qualifies for the 50% discount', () => {
+    const r = runCGTProjection({
+      ...base,
+      purchase_date: '2026-05-15',
+      sale_date: '2027-05-15', // 365 days later
+    });
+    expect(r.bucket).toBe('A');
+    // Discount applied → taxable gain = 0.5 * $10k = $5,000
+    expect(r.oldRules.taxableGain).toBeCloseTo(5_000, -1);
+  });
+
+  it('sale 1 day before the 12-month anniversary denies the discount', () => {
+    const r = runCGTProjection({
+      ...base,
+      purchase_date: '2026-05-15',
+      sale_date: '2027-05-14', // 364 days
+    });
+    expect(r.bucket).toBe('A');
+    // No discount → taxable gain = full $10k
+    expect(r.oldRules.taxableGain).toBeCloseTo(10_000, -1);
+  });
+
+  it('sale 1 day after the 12-month anniversary qualifies for the discount', () => {
+    const r = runCGTProjection({
+      ...base,
+      purchase_date: '2026-05-15',
+      sale_date: '2027-05-16', // 366 days
+    });
+    expect(r.bucket).toBe('A');
+    expect(r.oldRules.taxableGain).toBeCloseTo(5_000, -1);
+  });
+});

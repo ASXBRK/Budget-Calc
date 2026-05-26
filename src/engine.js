@@ -73,6 +73,7 @@ export const LEG = Object.freeze({
 // ---------- date / tax helpers ----------
 
 const MS_PER_YEAR = 365.25 * 24 * 3600 * 1000;
+const MS_PER_DAY = 24 * 3600 * 1000;
 
 function toDate(d) {
   return d instanceof Date ? d : new Date(d);
@@ -80,6 +81,15 @@ function toDate(d) {
 
 export function yearsBetween(d1, d2) {
   return (toDate(d2).getTime() - toDate(d1).getTime()) / MS_PER_YEAR;
+}
+
+// Whole-day count between two dates. Used by the 12-month CGT discount
+// eligibility check — yearsBetween divides by 365.25 days, so an asset
+// held exactly 12 calendar months (365 days) reads as 0.9993y and would
+// fail a `holdingYears >= 1` test. Day count avoids that rounding gap
+// and matches the ATO's "at least 12 months" rule (ITAA 1997 s 115-25).
+export function holdingDays(d1, d2) {
+  return (toDate(d2).getTime() - toDate(d1).getTime()) / MS_PER_DAY;
 }
 
 export function fyForDate(d) {
@@ -144,12 +154,19 @@ export function determineBucket(purchaseDate, saleDate, isPreCgt = null) {
 
 // ---------- core regime calculations ----------
 
-function applyOld({ nominalGain, holdingYears, otherIncome, fy }) {
+function applyOld({ nominalGain, holdingYears, holdingDays: heldDays, otherIncome, fy }) {
   if (nominalGain <= 0) {
     return { taxableGain: 0, taxOnGain: 0 };
   }
+  // Day count is the authoritative threshold (>= 365 days = at least 12
+  // calendar months per ITAA 1997 s 115-25). Mode 1 callers don't have
+  // dates and pass holdingYears only; whole-year inputs there don't hit
+  // the 365.25-day rounding gap.
+  const eligible = heldDays != null
+    ? heldDays >= 365
+    : holdingYears >= 1;
   const taxableGain =
-    holdingYears >= 1 ? nominalGain * LEG.oldDiscountRate : nominalGain;
+    eligible ? nominalGain * LEG.oldDiscountRate : nominalGain;
   const mt = marginalOnGain(otherIncome, taxableGain, fy);
   const medicare = medicareOnGain(otherIncome, taxableGain);
   return { taxableGain, taxOnGain: mt + medicare };
@@ -531,7 +548,13 @@ function runBucketA(args) {
       inflation,
     });
   }
-  const old = applyOld({ nominalGain, holdingYears: totalYears, otherIncome, fy });
+  const old = applyOld({
+    nominalGain,
+    holdingYears: totalYears,
+    holdingDays: holdingDays(purchaseDate, saleDate),
+    otherIncome,
+    fy,
+  });
   const nw = applyNew({
     salePrice,
     costBase,
@@ -592,7 +615,13 @@ function runBucketC(args) {
       inflation,
     });
   }
-  const old = applyOld({ nominalGain, holdingYears: totalYears, otherIncome, fy });
+  const old = applyOld({
+    nominalGain,
+    holdingYears: totalYears,
+    holdingDays: holdingDays(purchaseDate, saleDate),
+    otherIncome,
+    fy,
+  });
   const nw = applyNew({
     salePrice,
     costBase,
@@ -704,7 +733,13 @@ function runBucketB(args) {
 
   // Counterfactuals (full gain under each regime)
   const nominalGain = salePrice - costBase;
-  const oldCf = applyOld({ nominalGain, holdingYears: totalYears, otherIncome, fy });
+  const oldCf = applyOld({
+    nominalGain,
+    holdingYears: totalYears,
+    holdingDays: holdingDays(purchaseDate, saleDate),
+    otherIncome,
+    fy,
+  });
   const newCf = applyNew({
     salePrice,
     costBase,
