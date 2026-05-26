@@ -396,4 +396,53 @@ describe('12-month CGT discount threshold (day count, not 365.25)', () => {
     expect(r.bucket).toBe('A');
     expect(r.oldRules.taxableGain).toBeCloseTo(5_000, -1);
   });
+
+  // Three additional scenarios pinning calendar-month boundaries and the
+  // zero-gain edge case. Use runCGTProjection (the public API) with an
+  // explicit sale_price so the gain is deterministic.
+  it('sale exactly 12 months across a leap year (Jan 2024 → Jan 2025) qualifies', () => {
+    const r = runCGTProjection({
+      mode: 'specific',
+      asset_type: 'shares',
+      purchase_date: '2024-01-01',
+      sale_date: '2025-01-01', // 366 days (2024 is a leap year)
+      purchase_price: 100_000,
+      sale_price: 110_000,
+      inflation: 0.025,
+      other_income: 100_000,
+    });
+    expect(r.bucket).toBe('A');
+    expect(r.oldRules.taxableGain).toBe(5_000);
+  });
+
+  it('sale 11 months after purchase rejects the discount', () => {
+    const r = runCGTProjection({
+      mode: 'specific',
+      asset_type: 'shares',
+      purchase_date: '2024-01-01',
+      sale_date: '2024-12-01', // 335 days
+      purchase_price: 100_000,
+      sale_price: 110_000,
+      inflation: 0.025,
+      other_income: 150_000,
+    });
+    expect(r.bucket).toBe('A');
+    expect(r.oldRules.taxableGain).toBe(10_000);
+  });
+
+  it('same-day purchase and sale produces zero gain', () => {
+    const r = runCGTProjection({
+      mode: 'specific',
+      asset_type: 'shares',
+      purchase_date: '2025-06-15',
+      sale_date: '2025-06-15',
+      purchase_price: 100_000,
+      sale_price: 100_000,
+      inflation: 0.025,
+      other_income: 100_000,
+    });
+    expect(r.nominalGain).toBe(0);
+    expect(r.actual.taxOnGain).toBe(0);
+    expect(r.actual.afterTaxProceeds).toBe(100_000);
+  });
 });
