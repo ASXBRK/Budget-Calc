@@ -18,6 +18,22 @@ import { PdfReport } from './pdf.jsx';
 import { DebugTable, ScenarioDebugPanel } from './debug.jsx';
 
 // ----------------------------------------------------------------------------
+// Debug gating — opt-in via ?debug=1
+// ----------------------------------------------------------------------------
+// Read once at module load. Debug surfaces (ScenarioDebugPanel, the seed-
+// scenario loader, their toggles, and the related localStorage keys) only
+// activate when the flag is present. The reform isn't legislated yet, so
+// these stay shipped but invisible to normal users.
+
+const DEBUG_MODE = (() => {
+  try {
+    return new URLSearchParams(window.location.search).has('debug');
+  } catch {
+    return false;
+  }
+})();
+
+// ----------------------------------------------------------------------------
 // URL state
 // ----------------------------------------------------------------------------
 
@@ -96,16 +112,24 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [pdfState, setPdfState] = useState('idle'); // 'idle' | 'rendering' | 'capturing'
   const pdfRef = useRef(null);
+  // Debug toggles + persistence are inert outside DEBUG_MODE — no
+  // localStorage reads, no writes, no UI surface. The state still exists
+  // (useState calls run unconditionally per the rules of hooks) but it's
+  // initialised to false and never displayed.
   const [debugVisible, setDebugVisible] = useState(() => {
+    if (!DEBUG_MODE) return false;
     try { return localStorage.getItem('cgtDebugVisible') === '1'; } catch { return false; }
   });
   useEffect(() => {
+    if (!DEBUG_MODE) return;
     try { localStorage.setItem('cgtDebugVisible', debugVisible ? '1' : '0'); } catch {}
   }, [debugVisible]);
   const [scenarioDebugVisible, setScenarioDebugVisible] = useState(() => {
+    if (!DEBUG_MODE) return false;
     try { return localStorage.getItem('cgtScenarioDebugVisible') === '1'; } catch { return false; }
   });
   useEffect(() => {
+    if (!DEBUG_MODE) return;
     try { localStorage.setItem('cgtScenarioDebugVisible', scenarioDebugVisible ? '1' : '0'); } catch {}
   }, [scenarioDebugVisible]);
 
@@ -547,45 +571,49 @@ export default function App() {
         </div>
       </div>
 
-      {/* Debug scenarios — engine verification, not in PDF export */}
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 20px 24px' }}>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-          <button
-            onClick={() => setDebugVisible((v) => !v)}
-            style={{
-              background: 'transparent', border: 'none', cursor: 'pointer',
-              color: C.textSubtle, fontSize: 11, fontFamily: FONT_BODY,
-              padding: '6px 0', textDecoration: 'underline dotted', textUnderlineOffset: 3,
-            }}
-          >
-            {debugVisible ? 'Hide debug scenarios' : 'Show debug scenarios'}
-          </button>
-          {showResults && (
+      {/* Debug surfaces — gated behind ?debug=1 for engine reverification.
+          Invisible to normal users; the reform isn't legislated so we
+          keep the capability rather than deleting. */}
+      {DEBUG_MODE && (
+        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 20px 24px' }}>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
             <button
-              onClick={() => setScenarioDebugVisible((v) => !v)}
+              onClick={() => setDebugVisible((v) => !v)}
               style={{
                 background: 'transparent', border: 'none', cursor: 'pointer',
                 color: C.textSubtle, fontSize: 11, fontFamily: FONT_BODY,
                 padding: '6px 0', textDecoration: 'underline dotted', textUnderlineOffset: 3,
               }}
             >
-              {scenarioDebugVisible ? 'Hide scenario debug' : 'Show scenario debug'}
+              {debugVisible ? 'Hide debug scenarios' : 'Show debug scenarios'}
             </button>
+            {showResults && (
+              <button
+                onClick={() => setScenarioDebugVisible((v) => !v)}
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: C.textSubtle, fontSize: 11, fontFamily: FONT_BODY,
+                  padding: '6px 0', textDecoration: 'underline dotted', textUnderlineOffset: 3,
+                }}
+              >
+                {scenarioDebugVisible ? 'Hide scenario debug' : 'Show scenario debug'}
+              </button>
+            )}
+          </div>
+          {debugVisible && <DebugTable />}
+          {scenarioDebugVisible && showResults && (
+            <ScenarioDebugPanel
+              inputs={inputs}
+              focusScenario={focusScenario}
+              result={result}
+              chartData={chartData}
+              isPreCgt={isPreCgt}
+              costBase={costBase}
+              verdict={verdict}
+            />
           )}
         </div>
-        {debugVisible && <DebugTable />}
-        {scenarioDebugVisible && showResults && (
-          <ScenarioDebugPanel
-            inputs={inputs}
-            focusScenario={focusScenario}
-            result={result}
-            chartData={chartData}
-            isPreCgt={isPreCgt}
-            costBase={costBase}
-            verdict={verdict}
-          />
-        )}
-      </div>
+      )}
 
       {paramsOpen && <ParamsModal onClose={() => setParamsOpen(false)} />}
       {assumptionsOpen && showResults && (
