@@ -11,18 +11,54 @@ export function NumberInput({
   value, onChange, prefix = '$', step = 1, min, max,
   helperText, formatCap = (n) => `${prefix}${n.toLocaleString('en-AU')}`,
 }) {
+  // Blur-validation: local string state while the field is focused, parent
+  // state only updates on blur. HTML min/max attributes are omitted because
+  // they snap the value mid-keystroke (delete 100000 to type 50000 →
+  // input clamps to 1 the moment you delete, then 50000 appends → 150000).
+  const toDisplay = (v) => (v == null || v === '' ? '' : String(v));
+  const [localValue, setLocalValue] = useState(() => toDisplay(value));
+  const [focused, setFocused] = useState(false);
   const [notice, setNotice] = useState(null);
-  const handle = (raw) => {
-    let v = raw === '' ? 0 : Number(raw);
-    if (!Number.isFinite(v)) v = 0;
-    if (Number.isFinite(max) && v > max) {
-      v = max;
-      setNotice(`Value capped at ${formatCap(max)} — please review`);
-      setTimeout(() => setNotice(null), 4000);
+
+  // Sync from parent when the field isn't focused — covers URL load,
+  // programmatic resets, and any other external updates.
+  useEffect(() => {
+    if (!focused) setLocalValue(toDisplay(value));
+  }, [value, focused]);
+
+  const commit = () => {
+    setFocused(false);
+    if (localValue === '' || localValue == null) {
+      // Empty → revert to last valid parent value
+      setLocalValue(toDisplay(value));
+      setNotice(null);
+      return;
     }
-    if (Number.isFinite(min) && v < min) v = min;
-    onChange(v);
+    const n = Number(localValue);
+    if (!Number.isFinite(n)) {
+      setLocalValue(toDisplay(value));
+      setNotice(null);
+      return;
+    }
+    let clamped = n;
+    let clampedNotice = null;
+    if (Number.isFinite(max) && clamped > max) {
+      clamped = max;
+      clampedNotice = `Value capped at ${formatCap(max)} — please review`;
+    }
+    if (Number.isFinite(min) && clamped < min) {
+      clamped = min;
+    }
+    setLocalValue(toDisplay(clamped));
+    if (clamped !== value) onChange(clamped);
+    if (clampedNotice) {
+      setNotice(clampedNotice);
+      setTimeout(() => setNotice(null), 4000);
+    } else {
+      setNotice(null);
+    }
   };
+
   return (
     <div>
       <div style={{
@@ -32,11 +68,11 @@ export function NumberInput({
         {prefix && <span style={{ color: C.textMuted, marginRight: 6, fontSize: 13 }}>{prefix}</span>}
         <input
           type="number"
-          value={value === '' ? '' : value}
+          value={localValue}
           step={step}
-          min={min}
-          max={max}
-          onChange={(e) => handle(e.target.value)}
+          onChange={(e) => setLocalValue(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={commit}
           style={{
             border: 'none', outline: 'none', width: '100%', fontSize: 14,
             fontFamily: FONT_MONO, color: C.textPrimary, background: 'transparent',
