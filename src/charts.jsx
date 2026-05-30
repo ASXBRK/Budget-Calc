@@ -260,7 +260,7 @@ export function RatePanel({ data, height = 220 }) {
       data={data} points={points}
       oldKey="rateOld" newKey="rateNew" tooltipType="rate" height={height}
       title="Effective rate"
-      subtitle="Tax as a percentage of nominal gain. Y-axis fixed 0–50%. Green band: new rules lower. Red band: new rules higher."
+      subtitle="Tax as a percentage of nominal gain. Green band: new rules lower. Red band: new rules higher."
       yDomain={[0, 50]}
       yTicks={[0, 10, 20, 30, 40, 50]}
       yTickFormatter={(v) => `${v.toFixed(0)}%`}
