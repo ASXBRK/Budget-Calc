@@ -428,7 +428,7 @@ export function UnifiedInputs({ inputs, update, isPreCgt, v2027CapNotice }) {
       </Card>
 
       <Card>
-        <CardHeader title="Sale year" subtitle="Sets the chart's right edge — chart scales to fit." />
+        <CardHeader title="Sale year" />
         <div>
           <Label>Sale year</Label>
           <Slider
