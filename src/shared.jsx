@@ -37,6 +37,11 @@ export const HIDE_SPINNERS = `
   .slider-track { -webkit-appearance: none; appearance: none; height: 4px; background: ${C.border}; border-radius: 2px; outline: none; }
   .slider-track::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: ${C.teal}; cursor: pointer; border: 2px solid ${C.white}; box-sizing: border-box; }
   .slider-track::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: ${C.teal}; cursor: pointer; border: 2px solid ${C.white}; }
+  @media (max-width: 767px) {
+    .slider-track { height: 6px; }
+    .slider-track::-webkit-slider-thumb { width: 24px; height: 24px; }
+    .slider-track::-moz-range-thumb { width: 22px; height: 22px; }
+  }
 `;
 
 // ----------------------------------------------------------------------------
@@ -113,6 +118,34 @@ export const MAX_PURCHASE_DATE = (() => {
 })();
 
 export const MAX_PURCHASE_DATE_STR = MAX_PURCHASE_DATE.toISOString().slice(0, 10);
+
+// Viewport hook — true below 768px. Used to switch the App-level grid
+// to a single column and pass a `compact` flag down to chart panels.
+// PdfReport overrides with explicit values so the export always renders
+// the desktop layout regardless of the user's current viewport.
+export function useIsMobile() {
+  const get = () => {
+    try {
+      return typeof window !== 'undefined'
+        && window.matchMedia('(max-width: 767px)').matches;
+    } catch {
+      return false;
+    }
+  };
+  const [isMobile, setIsMobile] = useState(get);
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const mql = window.matchMedia('(max-width: 767px)');
+    const handler = (e) => setIsMobile(e.matches);
+    if (mql.addEventListener) mql.addEventListener('change', handler);
+    else mql.addListener(handler);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener('change', handler);
+      else mql.removeListener(handler);
+    };
+  }, []);
+  return isMobile;
+}
 
 export function isValidPurchaseDate(s) {
   if (typeof s !== 'string') return false;

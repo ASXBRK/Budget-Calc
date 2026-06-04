@@ -2,7 +2,7 @@ import React from 'react';
 import { LEG } from './engine.js';
 import {
   C, FONT_BODY, FONT_HEAD, FONT_MONO,
-  Card, fmt, fmtDate,
+  Card, fmt, fmtDate, useIsMobile,
 } from './shared.jsx';
 
 export function TimelineStrip({ purchaseDate, saleDate, isPreCgt, bucket, incomeSupport }) {
@@ -120,6 +120,7 @@ export function SummaryCards({ result, verdict }) {
     neutral: { bg: C.offWhite, fg: C.textSecondary, border: C.border },
   };
   const v = verdict ? toneStyles[verdict.tone] : toneStyles.neutral;
+  const isMobile = useIsMobile();
 
   const isPreCommencement = result.bucket === 'A';
   const card1Label = isPreCommencement
@@ -135,7 +136,11 @@ export function SummaryCards({ result, verdict }) {
   const diff = (result.actual?.afterTaxProceeds ?? 0) - (result.oldRules?.afterTaxProceeds ?? 0);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+      gap: 12,
+    }}>
       <Card style={{ padding: 16 }}>
         <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
           {card1Label}

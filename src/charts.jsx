@@ -181,15 +181,19 @@ function buildBandPoints(data, oldKey, newKey, betterWhen) {
 }
 
 function PanelChart({
-  data, points, oldKey, newKey, tooltipType, height,
+  data, points, oldKey, newKey, tooltipType, height, compact,
   title, subtitle, yDomain, yTicks, yTickFormatter,
 }) {
+  const margin = compact
+    ? { top: 8, right: 8, bottom: 32, left: 0 }
+    : { top: 8, right: 16, bottom: 36, left: 4 };
+  const yAxisWidth = compact ? 44 : 60;
   return (
     <div>
       <PanelHeader title={title} subtitle={subtitle} />
       <div style={{ width: '100%', height }}>
         <ResponsiveContainer>
-          <ComposedChart data={points} margin={{ top: 8, right: 16, bottom: 36, left: 4 }}>
+          <ComposedChart data={points} margin={margin}>
             <CartesianGrid stroke={C.chartGrid} strokeDasharray="3 3" vertical={false} />
             <XAxis
               {...getXAxisProps(data)}
@@ -201,9 +205,9 @@ function PanelChart({
               domain={yDomain}
               ticks={yTicks}
               tickFormatter={yTickFormatter}
-              width={60}
+              width={yAxisWidth}
             />
-            <Tooltip content={<ComparisonTooltip type={tooltipType} />} />
+            <Tooltip content={<ComparisonTooltip type={tooltipType} />} wrapperStyle={{ maxWidth: '90vw' }} />
             <Legend
               verticalAlign="top" height={26} iconType="line"
               payload={[
@@ -225,12 +229,12 @@ function PanelChart({
   );
 }
 
-export function DiffPanel({ data, height = 220 }) {
+export function DiffPanel({ data, height = 220, compact = false }) {
   const points = buildBandPoints(data, 'taxOld', 'taxNew', 'lower');
   return (
     <PanelChart
       data={data} points={points}
-      oldKey="taxOld" newKey="taxNew" tooltipType="tax" height={height}
+      oldKey="taxOld" newKey="taxNew" tooltipType="tax" height={height} compact={compact}
       title="Tax owed"
       subtitle="Tax payable at each sale year. Solid lines compare regimes. Green band: new rules cost less. Red band: new rules cost more."
       yDomain={[0, 'auto']}
@@ -239,12 +243,12 @@ export function DiffPanel({ data, height = 220 }) {
   );
 }
 
-export function ProceedsPanel({ data, height = 220 }) {
+export function ProceedsPanel({ data, height = 220, compact = false }) {
   const points = buildBandPoints(data, 'afterTaxOld', 'afterTaxNew', 'higher');
   return (
     <PanelChart
       data={data} points={points}
-      oldKey="afterTaxOld" newKey="afterTaxNew" tooltipType="proceeds" height={height}
+      oldKey="afterTaxOld" newKey="afterTaxNew" tooltipType="proceeds" height={height} compact={compact}
       title="After-tax proceeds"
       subtitle="What you keep after tax at each sale year. Solid lines show retention under each regime. Green band: new rules keep more. Red band: new rules keep less."
       yDomain={[0, 'auto']}
@@ -253,12 +257,12 @@ export function ProceedsPanel({ data, height = 220 }) {
   );
 }
 
-export function RatePanel({ data, height = 220 }) {
+export function RatePanel({ data, height = 220, compact = false }) {
   const points = buildBandPoints(data, 'rateOld', 'rateNew', 'lower');
   return (
     <PanelChart
       data={data} points={points}
-      oldKey="rateOld" newKey="rateNew" tooltipType="rate" height={height}
+      oldKey="rateOld" newKey="rateNew" tooltipType="rate" height={height} compact={compact}
       title="Effective rate"
       subtitle="Tax as a percentage of nominal gain. Green band: new rules lower. Red band: new rules higher."
       yDomain={[0, 50]}

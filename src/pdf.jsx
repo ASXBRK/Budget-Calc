@@ -119,13 +119,13 @@ export function PdfReport({ inputs, focusScenario, result, chartData, isPreCgt }
 
       {/* Three-panel stack — PDF heights compressed to fit one A4 page */}
       <div style={{ marginTop: 10, width: 700 }}>
-        <DiffPanel data={chartData} height={140} />
+        <DiffPanel data={chartData} height={140} compact={false} />
       </div>
       <div style={{ marginTop: 6, width: 700 }}>
-        <ProceedsPanel data={chartData} height={140} />
+        <ProceedsPanel data={chartData} height={140} compact={false} />
       </div>
       <div style={{ marginTop: 6, width: 700 }}>
-        <RatePanel data={chartData} height={140} />
+        <RatePanel data={chartData} height={140} compact={false} />
       </div>
 
       <div style={{ marginTop: 14 }}>

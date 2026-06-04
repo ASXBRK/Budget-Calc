@@ -8,7 +8,7 @@ import {
   HIDE_SPINNERS, MS_PER_YEAR,
   Card, fmt, fmtDate, pillButton,
   DEFAULT_INPUTS, buildCostBase, derivedSalePrice,
-  explainerForScenario, isValidPurchaseDate,
+  explainerForScenario, isValidPurchaseDate, useIsMobile,
 } from './shared.jsx';
 import { UnifiedInputs } from './inputs.jsx';
 import { DiffPanel, ProceedsPanel, RatePanel } from './charts.jsx';
@@ -106,6 +106,7 @@ function decodeState(search) {
 // ----------------------------------------------------------------------------
 
 export default function App() {
+  const isMobile = useIsMobile();
   const [inputs, setInputs] = useState(DEFAULT_INPUTS);
   const [paramsOpen, setParamsOpen] = useState(false);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
@@ -435,7 +436,8 @@ export default function App() {
       {/* Nav bar */}
       <div style={{
         background: C.white, borderBottom: `1px solid ${C.border}`,
-        padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: isMobile ? '10px 14px' : '12px 24px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         position: 'sticky', top: 0, zIndex: 50,
       }}>
         <div style={{ fontFamily: FONT_HEAD, fontWeight: 700, fontSize: 16, color: C.textPrimary }}>
@@ -454,8 +456,8 @@ export default function App() {
       </div>
 
       {/* Intro */}
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '20px 20px 0' }}>
-        <Card style={{ padding: 22 }}>
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: isMobile ? '14px 12px 0' : '20px 20px 0' }}>
+        <Card style={{ padding: isMobile ? 14 : 22 }}>
           <div style={{ fontSize: 15, color: C.textSecondary, lineHeight: 1.7 }}>
             <p style={{ margin: 0 }}>
               The May 2026 Federal Budget proposes replacing the 50% CGT discount with cost-base indexation plus a 30% minimum tax on real gains, for CGT events on or after 1 July 2027. This tool models the impact for a single asset across different sale years. Calculations follow the Budget paper and published industry analysis.
@@ -480,8 +482,11 @@ export default function App() {
 
       {/* Main layout */}
       <div style={{
-        maxWidth: 1280, margin: '0 auto', padding: 20,
-        display: 'grid', gridTemplateColumns: '360px 1fr', gap: 16,
+        maxWidth: 1280, margin: '0 auto',
+        padding: isMobile ? 12 : 20,
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : '360px 1fr',
+        gap: isMobile ? 12 : 16,
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <UnifiedInputs inputs={inputs} update={update} isPreCgt={isPreCgt} v2027CapNotice={v2027CapNotice} />
@@ -554,12 +559,12 @@ export default function App() {
           )}
 
           {showResults && chartData.length > 0 && (
-            <Card>
-              <DiffPanel data={chartData} height={220} />
-              <div style={{ height: 32 }} />
-              <ProceedsPanel data={chartData} height={220} />
-              <div style={{ height: 32 }} />
-              <RatePanel data={chartData} height={220} />
+            <Card style={isMobile ? { padding: 10 } : undefined}>
+              <DiffPanel data={chartData} height={isMobile ? 200 : 220} compact={isMobile} />
+              <div style={{ height: isMobile ? 22 : 32 }} />
+              <ProceedsPanel data={chartData} height={isMobile ? 200 : 220} compact={isMobile} />
+              <div style={{ height: isMobile ? 22 : 32 }} />
+              <RatePanel data={chartData} height={isMobile ? 200 : 220} compact={isMobile} />
             </Card>
           )}
 

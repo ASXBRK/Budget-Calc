@@ -1,29 +1,47 @@
 import React from 'react';
 import { X } from 'lucide-react';
 import { LEG } from './engine.js';
-import { C, FONT_HEAD, FONT_MONO, fmt, fmtPct, fmtDate } from './shared.jsx';
+import { C, FONT_HEAD, FONT_MONO, fmt, fmtPct, fmtDate, useIsMobile } from './shared.jsx';
 
 export function Modal({ title, onClose, children, wide }) {
+  const isMobile = useIsMobile();
   return (
     <div
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(17, 24, 39, 0.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+        display: 'flex',
+        alignItems: isMobile ? 'stretch' : 'center',
+        justifyContent: 'center', zIndex: 100,
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: C.white, borderRadius: 12, padding: 24,
-          width: wide ? 720 : 520, maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto',
-          border: `1px solid ${C.border}`,
+          background: C.white,
+          borderRadius: isMobile ? 0 : 12,
+          padding: isMobile ? 16 : 24,
+          width: isMobile ? '100vw' : (wide ? 720 : 520),
+          maxWidth: isMobile ? '100vw' : '90vw',
+          maxHeight: isMobile ? '100vh' : '90vh',
+          overflowY: 'auto',
+          border: isMobile ? 'none' : `1px solid ${C.border}`,
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={{ fontFamily: FONT_HEAD, fontSize: 16, fontWeight: 700 }}>{title}</div>
-          <button onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: C.textMuted, padding: 4 }}>
-            <X size={18} />
+          <button
+            onClick={onClose}
+            style={{
+              border: 'none', background: 'transparent', cursor: 'pointer',
+              color: C.textMuted,
+              padding: isMobile ? 10 : 4,
+              minWidth: isMobile ? 44 : undefined,
+              minHeight: isMobile ? 44 : undefined,
+            }}
+            aria-label="Close"
+          >
+            <X size={isMobile ? 22 : 18} />
           </button>
         </div>
         {children}
